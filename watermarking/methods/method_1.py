@@ -21,6 +21,17 @@ from watermarking.base import (
 )
 
 
+from watermarking.common import (
+    haar_dwt2,
+    haar_idwt2,
+    wavedec2_haar,
+    waverec2_haar,
+    algo1_to_semi_binary,
+    algo2_from_semi_binary,
+    create_watermark_image
+)
+
+
 class Method1(BaseWatermarkMethod):
     """
     Robust digital image watermarking based on Singular Value Decomposition (SVD)
@@ -99,162 +110,18 @@ class Method1(BaseWatermarkMethod):
             )
         ]
 
-    # =========================================================================
-    # Algorithms 1 & 2: Semi-Binary Conversion (Section IV)
-    # =========================================================================
-
-    @staticmethod
-    def _algo1_to_semi_binary(s_val: float, min_len: int = 10) -> List[float]:
-        """
-        Algorithm 1: Converts a real number (singular value or wavelet block entry)
-        to a semi-binary array W.
-        
-        W[0]: sign (1 or -1)
-        W[1]: float in [0, 2) equal to abs(S) % 2
-        W[2..]: binary bits (0 or 1) representing fix(abs(S) / 2)
-        """
-        if s_val < 0:
-            sign = -1.0
-            s_abs = -float(s_val)
-        else:
-            sign = 1.0
-            s_abs = float(s_val)
-
-        w = [sign]
-        s_curr = s_abs
-        if s_curr == 0.0:
-            w.append(0.0)
-        else:
-            while s_curr != 0.0:
-                w.append(float(s_curr % 2.0))
-                s_curr = float(int(s_curr // 2.0))
-
-        # Pad with 0.0 so target bit indices are always accessible
-        while len(w) < min_len:
-            w.append(0.0)
-
-        return w
-
-    @staticmethod
-    def _algo2_from_semi_binary(w: List[float]) -> float:
-        """
-        Algorithm 2: Reconstructs a real number from a semi-binary array W.
-        S = W[0] * sum_{i=1}^{len-1}( W[i] * 2^(i-1) )
-        """
-        s = 0.0
-        coeff = 1.0
-        for i in range(1, len(w)):
-            s += float(w[i]) * coeff
-            coeff *= 2.0
-        s *= float(w[0])
-        return s
-
-    # =========================================================================
-    # Haar Discrete Wavelet Transform (2D)
-    # =========================================================================
-
-    @staticmethod
-    def _haar_dwt2(x: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """Performs a 1-level 2D Haar DWT returning (LL, LH, HL, HH)."""
-        sqrt2 = np.sqrt(2.0)
-        l_row = (x[:, 0::2] + x[:, 1::2]) / sqrt2
-        h_row = (x[:, 0::2] - x[:, 1::2]) / sqrt2
-
-        ll = (l_row[0::2, :] + l_row[1::2, :]) / sqrt2
-        lh = (l_row[0::2, :] - l_row[1::2, :]) / sqrt2
-        hl = (h_row[0::2, :] + h_row[1::2, :]) / sqrt2
-        hh = (h_row[0::2, :] - h_row[1::2, :]) / sqrt2
-        return ll, lh, hl, hh
-
-    @staticmethod
-    def _haar_idwt2(ll: np.ndarray, lh: np.ndarray, hl: np.ndarray, hh: np.ndarray) -> np.ndarray:
-        """Performs a 1-level 2D Haar IDWT reconstructing spatial domain array."""
-        sqrt2 = np.sqrt(2.0)
-        h_half, w_half = ll.shape
-
-        l_row = np.empty((h_half * 2, w_half), dtype=np.float64)
-        l_row[0::2, :] = (ll + lh) / sqrt2
-        l_row[1::2, :] = (ll - lh) / sqrt2
-
-        h_row = np.empty((h_half * 2, w_half), dtype=np.float64)
-        h_row[0::2, :] = (hl + hh) / sqrt2
-        h_row[1::2, :] = (hl - hh) / sqrt2
-
-        x = np.empty((h_half * 2, w_half * 2), dtype=np.float64)
-        x[:, 0::2] = (l_row + h_row) / sqrt2
-        x[:, 1::2] = (l_row - h_row) / sqrt2
-        return x
+    # Shared algorithms re-exposed on Method1 for backwards compatibility
+    _algo1_to_semi_binary = staticmethod(algo1_to_semi_binary)
+    _algo2_from_semi_binary = staticmethod(algo2_from_semi_binary)
+    _haar_dwt2 = staticmethod(haar_dwt2)
+    _haar_idwt2 = staticmethod(haar_idwt2)
+    _create_watermark_image = staticmethod(create_watermark_image)
 
     def _wavedec2_haar(self, img: np.ndarray, level: int) -> Tuple[np.ndarray, List[Tuple[np.ndarray, np.ndarray, np.ndarray]]]:
-        """K-level 2D Haar wavelet decomposition."""
-        coeffs = []
-        current_ll = img.astype(np.float64)
-        for _ in range(level):
-            ll, lh, hl, hh = self._haar_dwt2(current_ll)
-            coeffs.append((lh, hl, hh))
-            current_ll = ll
-        return current_ll, coeffs
+        return wavedec2_haar(img, level)
 
     def _waverec2_haar(self, current_ll: np.ndarray, coeffs: List[Tuple[np.ndarray, np.ndarray, np.ndarray]]) -> np.ndarray:
-        """K-level 2D Haar wavelet reconstruction."""
-        ll = current_ll.copy()
-        for lh, hl, hh in reversed(coeffs):
-            ll = self._haar_idwt2(ll, lh, hl, hh)
-        return ll
-
-    # =========================================================================
-    # Watermark Logo Helper
-    # =========================================================================
-
-    @staticmethod
-    def _create_watermark_image(watermark_data: str, size: int = 64) -> Image.Image:
-        """
-        Creates or loads a grayscale watermark image of dimension (size, size).
-        If watermark_data is a valid image filepath, loads and resizes it.
-        Otherwise renders an academic emblem logo with the payload text.
-        """
-        if os.path.isfile(watermark_data):
-            try:
-                img = Image.open(watermark_data).convert("L")
-                return img.resize((size, size), Image.Resampling.LANCZOS)
-            except Exception:
-                pass
-
-        # Generate 64x64 geometric emblem (inspired by UOK logo in paper Fig. 3)
-        img = Image.new("L", (size, size), color=255)
-        draw = ImageDraw.Draw(img)
-
-        # Concentric outer rings
-        draw.ellipse((3, 3, size - 4, size - 4), outline=0, width=2)
-        draw.ellipse((8, 8, size - 9, size - 9), outline=0, width=1)
-
-        # Emblem internal geometry
-        draw.line((size // 2, 9, size // 2, size - 10), fill=0, width=1)
-        draw.line((9, size // 2, size - 10, size // 2), fill=0, width=1)
-        draw.ellipse((size // 4, size // 4, 3 * size // 4, 3 * size // 4), outline=0, width=1)
-
-        # Render text payload
-        clean_text = str(watermark_data).strip()
-        if not clean_text:
-            clean_text = "UOK"
-        words = clean_text.split()
-        tag = words[0][:5] if words else "UOK"
-
-        try:
-            font = ImageFont.load_default()
-        except Exception:
-            font = None
-
-        bbox = draw.textbbox((0, 0), tag, font=font)
-        tw = bbox[2] - bbox[0]
-        th = bbox[3] - bbox[1]
-        tx = (size - tw) // 2
-        ty = (size - th) // 2
-        # Clean white background behind text for readability
-        draw.rectangle((tx - 2, ty - 2, tx + tw + 2, ty + th + 2), fill=255)
-        draw.text((tx, ty), tag, fill=0, font=font)
-
-        return img
+        return waverec2_haar(current_ll, coeffs)
 
     # =========================================================================
     # Embedding Procedure (Section V.A)
