@@ -6,7 +6,6 @@ Based on Chaudhary et al. (Scientific Reports 2025, Nature Portfolio).
 import io
 import unittest
 import numpy as np
-import scipy.ndimage
 from PIL import Image, ImageFilter
 
 from watermarking.registry import registry
@@ -43,14 +42,11 @@ class TestMethod2(unittest.TestCase):
             unscrambled = Method2.arnold_transform(scrambled, iters=iters, inverse=True)
             self.assertTrue(np.allclose(rand_img, unscrambled))
 
-    def test_embed_and_extract_grayscale_medical(self):
-        """Tests embedding & extraction on a simulated 512x512 medical image."""
-        # Create synthetic medical-like chest X-ray image (512x512 grayscale)
-        x = np.linspace(-3, 3, 512)
-        y = np.linspace(-3, 3, 512)
-        xx, yy = np.meshgrid(x, y)
-        simulated_scan = np.clip(120 + 80 * np.exp(-(xx**2 + yy**2) / 4) + 15 * np.cos(xx * 3), 0, 255).astype(np.uint8)
-        host_img = Image.fromarray(simulated_scan, mode="L")
+    def test_embed_and_extract_paper_spec(self):
+        """Tests embedding & extraction on a paper-compliant 512x512 grayscale image."""
+        host_img = Image.open("assets/examples/covid_xray_512.png")
+        self.assertEqual(host_img.size, (512, 512))
+        self.assertEqual(host_img.mode, "L")
 
         payload = "Name=?\nAge=?"
         params = {"gain_factor": 0.02, "arnold_iters": 10, "wavelet": "haar"}
@@ -58,7 +54,7 @@ class TestMethod2(unittest.TestCase):
         result = self.method.embed(host_img, payload, params)
 
         self.assertIsInstance(result, WatermarkResult)
-        self.assertEqual(result.watermarked_image.size, host_img.size)
+        self.assertEqual(result.watermarked_image.size, (512, 512))
         self.assertEqual(result.watermarked_image.mode, "L")
         self.assertIn("psnr_db", result.metrics)
         self.assertIn("ssim", result.metrics)
@@ -77,27 +73,33 @@ class TestMethod2(unittest.TestCase):
         self.assertGreaterEqual(ext["nc"], 0.99)
         self.assertIn("extracted_watermark", ext)
 
-    def test_embed_and_extract_rgb_color(self):
-        """Tests embedding into an RGB color image and verifies difference map generation."""
-        host_img = Image.open("assets/examples/diver.jpg")
-        payload = "© SLAYMARKING 2026 / ABYSS"
-        params = {"gain_factor": 0.02, "arnold_iters": 8, "wavelet": "haar"}
+    def test_rejection_of_different_images(self):
+        """Verifies that non-512x512 or non-grayscale images are strictly rejected with descriptive errors."""
+        params = {"gain_factor": 0.02, "arnold_iters": 10, "wavelet": "haar"}
 
-        result = self.method.embed(host_img, payload, params)
+        # 1. Reject RGB image of wrong size
+        rgb_img = Image.open("assets/examples/diver.jpg")
+        with self.assertRaises(ValueError) as ctx:
+            self.method.embed(rgb_img, "TEST", params)
+        self.assertIn("512×512", str(ctx.exception))
+        self.assertIn("grayscale", str(ctx.exception).lower())
 
-        self.assertEqual(result.watermarked_image.size, host_img.size)
-        self.assertEqual(result.watermarked_image.mode, "RGB")
-        self.assertIsNotNone(result.difference_map)
-        self.assertGreater(result.metrics["psnr_db"], 45.0)
-        self.assertGreater(result.metrics["ssim"], 0.95)
-        self.assertGreaterEqual(result.metrics["nc"], 0.99)
+        # 2. Reject 512x512 RGB image (must be grayscale mode 'L')
+        rgb_512 = Image.new("RGB", (512, 512), (100, 100, 100))
+        with self.assertRaises(ValueError) as ctx:
+            self.method.embed(rgb_512, "TEST", params)
+        self.assertIn("Grayscale", str(ctx.exception))
+
+        # 3. Reject grayscale image of non-512x512 dimension (e.g. 256x256)
+        gray_256 = Image.new("L", (256, 256), 128)
+        with self.assertRaises(ValueError) as ctx:
+            self.method.embed(gray_256, "TEST", params)
+        self.assertIn("512×512", str(ctx.exception))
 
     def test_robustness_against_attacks(self):
         """Tests robustness of watermark against common attacks from Table 4/5 of paper."""
-        # 512x512 synthetic image
-        arr = np.random.randint(60, 200, (512, 512), dtype=np.uint8)
-        host_img = Image.fromarray(arr, mode="L")
-        payload = "CONFIDENTIAL"
+        host_img = Image.open("assets/examples/covid_xray_512.png")
+        payload = "Name=?\nAge=?"
         params = {"gain_factor": 0.04, "arnold_iters": 5, "wavelet": "haar"}
 
         result = self.method.embed(host_img, payload, params)

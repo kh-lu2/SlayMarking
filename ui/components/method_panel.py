@@ -277,6 +277,11 @@ class MethodPanel(ctk.CTkFrame):
             self.after_cancel(self._debounce_timer)
         self._debounce_timer = self.after(150, self.trigger_apply)
 
+    def set_status(self, text: str, is_error: bool = False):
+        """Updates the status label with success or error styling."""
+        color = OceanTheme.CORAL_ALERT if is_error else OceanTheme.SEAFOAM
+        self.lbl_auto_status.configure(text=text, text_color=color)
+
     def trigger_apply(self):
         """Immediately applies watermark."""
         self._debounce_timer = None
@@ -284,7 +289,6 @@ class MethodPanel(ctk.CTkFrame):
         payload = self.entry_payload.get().strip() or "DEFAULT_WATERMARK"
         self.lbl_auto_status.configure(text="⚡ Applying watermark...", text_color=OceanTheme.AQUA_SECONDARY)
         self.on_apply_watermark(method, payload, self.param_values)
-        self.lbl_auto_status.configure(text=f"✓ {method.get_metadata().short_name} applied", text_color=OceanTheme.SEAFOAM)
 
     def _open_paper_info_modal(self):
         """Opens an in-app overlay modal card directly inside the main application window."""

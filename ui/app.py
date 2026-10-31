@@ -97,15 +97,33 @@ class SlayMarkingApp(ctk.CTk):
         if self.current_cover_image is None:
             return
 
-        result: WatermarkResult = method.embed(
-            image=self.current_cover_image,
-            watermark_data=watermark_data,
-            params=params
-        )
+        try:
+            result: WatermarkResult = method.embed(
+                image=self.current_cover_image,
+                watermark_data=watermark_data,
+                params=params
+            )
 
-        # Update viewer with watermarked output and amplified difference residual map
-        self.viewer.set_watermark_result(
-            watermarked=result.watermarked_image,
-            difference=result.difference_map,
-            status_msg=result.message
-        )
+            if result.status == "error":
+                self._handle_watermark_error(method, result.message)
+                return
+
+            # Update viewer with watermarked output and amplified difference residual map
+            self.viewer.clear_error()
+            self.viewer.set_watermark_result(
+                watermarked=result.watermarked_image,
+                difference=result.difference_map,
+                status_msg=result.message
+            )
+            self.method_panel.set_status(f"✓ {method.get_metadata().short_name} applied", is_error=False)
+
+        except Exception as e:
+            self._handle_watermark_error(method, str(e))
+
+    def _handle_watermark_error(self, method: BaseWatermarkMethod, error_msg: str):
+        """Displays error notice across viewer and control panel."""
+        self.viewer.show_error(error_msg, method_name=method.get_metadata().short_name)
+        short_err = error_msg.splitlines()[0]
+        if len(short_err) > 42:
+            short_err = short_err[:39] + "..."
+        self.method_panel.set_status(f"❌ {short_err}", is_error=True)

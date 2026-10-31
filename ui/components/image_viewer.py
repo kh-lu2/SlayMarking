@@ -38,6 +38,9 @@ class ImageViewer(ctk.CTkFrame):
         self.split_label: Optional[ctk.CTkLabel] = None
         self.lbl_legend: Optional[ctk.CTkLabel] = None
 
+        self.error_message: Optional[str] = None
+        self.error_method: str = ""
+
         self._last_w: int = 0
         self._last_h: int = 0
         self._resize_timer: Optional[str] = None
@@ -142,13 +145,28 @@ class ImageViewer(ctk.CTkFrame):
         self.original_image = image
         self.watermarked_image = None
         self.difference_image = None
+        self.clear_error()
         self._render_current_mode()
 
     def set_watermark_result(self, watermarked: Image.Image, difference: Image.Image, status_msg: str = ""):
         """Updates the viewer with newly generated watermarked and difference images."""
+        self.clear_error()
         self.watermarked_image = watermarked
         self.difference_image = difference
         self._render_current_mode()
+
+    def show_error(self, message: str, method_name: str = ""):
+        """Displays error notice when an image fails algorithm requirements."""
+        self.error_message = message
+        self.error_method = method_name
+        self.watermarked_image = None
+        self.difference_image = None
+        self._render_current_mode()
+
+    def clear_error(self):
+        """Clears active error state."""
+        self.error_message = None
+        self.error_method = ""
 
     def _on_mode_change(self, mode: str):
         self.view_mode = mode
@@ -178,6 +196,11 @@ class ImageViewer(ctk.CTkFrame):
         container_w = int(raw_w / scaling) if raw_w > 50 else 600
         container_h = int(raw_h / scaling) if raw_h > 50 else 500
 
+        # If there is an active algorithm error, show the error card
+        if self.error_message:
+            self._render_error_view(container_w, container_h)
+            return
+
         if self.view_mode == "Split View":
             self._render_split_view(container_w, container_h)
         elif self.view_mode == "Watermarked":
@@ -190,6 +213,68 @@ class ImageViewer(ctk.CTkFrame):
             target = self.difference_image if self.difference_image else self._generate_blank_diff()
             title = "Watermark Residual Heatmap" if self.difference_image else "Residual Heatmap"
             self._render_single_image(target, title, container_w, container_h, badge="AMPLIFIED RESIDUALS")
+
+    def _render_error_view(self, total_w: int, total_h: int):
+        """Renders a prominent error card explaining algorithm requirement failures."""
+        card = ctk.CTkFrame(
+            self.display_container,
+            fg_color=OceanTheme.BG_CARD,
+            border_width=2,
+            border_color=OceanTheme.CORAL_ALERT,
+            corner_radius=12
+        )
+        card.pack(fill="both", expand=True, padx=20, pady=20)
+
+        # Header with Alert icon
+        hdr = ctk.CTkFrame(card, fg_color="transparent")
+        hdr.pack(fill="x", padx=24, pady=(24, 12))
+
+        ctk.CTkLabel(
+            hdr,
+            text="⚠️ INCOMPATIBLE IMAGE SPECIFICATION",
+            font=OceanTheme.FONT_TITLE,
+            text_color=OceanTheme.CORAL_ALERT
+        ).pack(side="left")
+
+        if self.error_method:
+            ctk.CTkLabel(
+                hdr,
+                text=f"[{self.error_method}]",
+                font=OceanTheme.FONT_BODY_BOLD,
+                text_color=OceanTheme.AMBER_GLOW
+            ).pack(side="right")
+
+        # Error Details Box
+        msg_frame = ctk.CTkFrame(card, fg_color=OceanTheme.BG_CARD_ALT, corner_radius=8)
+        msg_frame.pack(fill="both", expand=True, padx=24, pady=(0, 16))
+
+        ctk.CTkLabel(
+            msg_frame,
+            text=self.error_message,
+            font=OceanTheme.FONT_BODY_BOLD,
+            text_color=OceanTheme.TEXT_PRIMARY,
+            wraplength=max(total_w - 90, 320),
+            justify="left"
+        ).pack(anchor="w", padx=20, pady=20)
+
+        # Context Footer
+        footer = ctk.CTkFrame(card, fg_color="transparent")
+        footer.pack(fill="x", padx=24, pady=(0, 20))
+
+        if self.original_image:
+            w, h = self.original_image.size
+            mode = self.original_image.mode
+            ctk.CTkLabel(
+                footer,
+                text=(
+                    f"Selected Image: {w}×{h} pixels • Mode: {mode}\n"
+                    "Paper Requirement: exactly 512×512 pixels • Mode: Grayscale ('L')\n"
+                    "💡 Tip: Select 'Covid Xray 512' from the Image Sanctuary or import a 512×512 grayscale image."
+                ),
+                font=OceanTheme.FONT_BODY,
+                text_color=OceanTheme.TEXT_SECONDARY,
+                justify="left"
+            ).pack(anchor="w")
 
     def _render_split_view(self, total_w: int, total_h: int):
         frame = ctk.CTkFrame(self.display_container, fg_color=OceanTheme.BG_CARD, corner_radius=10)
