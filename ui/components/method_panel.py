@@ -277,6 +277,11 @@ class MethodPanel(ctk.CTkFrame):
             self.after_cancel(self._debounce_timer)
         self._debounce_timer = self.after(150, self.trigger_apply)
 
+    def set_status(self, text: str, is_error: bool = False):
+        """Updates the status label with success or error styling."""
+        color = OceanTheme.CORAL_ALERT if is_error else OceanTheme.SEAFOAM
+        self.lbl_auto_status.configure(text=text, text_color=color)
+
     def trigger_apply(self):
         """Immediately applies watermark."""
         self._debounce_timer = None
@@ -284,7 +289,6 @@ class MethodPanel(ctk.CTkFrame):
         payload = self.entry_payload.get().strip() or "DEFAULT_WATERMARK"
         self.lbl_auto_status.configure(text="⚡ Applying watermark...", text_color=OceanTheme.AQUA_SECONDARY)
         self.on_apply_watermark(method, payload, self.param_values)
-        self.lbl_auto_status.configure(text=f"✓ {method.get_metadata().short_name} applied", text_color=OceanTheme.SEAFOAM)
 
     def _open_paper_info_modal(self):
         """Opens an in-app overlay modal card directly inside the main application window."""
@@ -305,15 +309,18 @@ class MethodPanel(ctk.CTkFrame):
         overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
         self._active_info_overlay = overlay
 
-        # Centered in-app modal card
+        # Centered in-app modal card (compact with high-legibility typography)
+        card_w = 540
+        card_h = 490
+
         modal_card = ctk.CTkFrame(
             overlay,
             fg_color=OceanTheme.BG_CARD,
             border_width=2,
             border_color=OceanTheme.BORDER_CYAN,
-            corner_radius=12,
-            width=640,
-            height=480
+            corner_radius=14,
+            width=card_w,
+            height=card_h
         )
         modal_card.place(relx=0.5, rely=0.5, anchor="center")
         modal_card.pack_propagate(False)
@@ -328,16 +335,16 @@ class MethodPanel(ctk.CTkFrame):
         overlay.bind("<Button-1>", lambda e: close_overlay() if e.widget == overlay else None)
 
         content = ctk.CTkFrame(modal_card, fg_color="transparent")
-        content.pack(fill="both", expand=True, padx=24, pady=20)
+        content.pack(fill="both", expand=True, padx=22, pady=(18, 14))
 
         # Top row: Domain badge + ✕ button
         top_row = ctk.CTkFrame(content, fg_color="transparent")
-        top_row.pack(fill="x", pady=(0, 6))
+        top_row.pack(fill="x", pady=(0, 8))
 
         badge = ctk.CTkLabel(
             top_row,
             text=f"🔬 DOMAIN: {meta.domain.upper()}",
-            font=OceanTheme.FONT_BODY_BOLD,
+            font=("Segoe UI", 12, "bold"),
             text_color=OceanTheme.CYAN_PRIMARY
         )
         badge.pack(side="left")
@@ -347,54 +354,66 @@ class MethodPanel(ctk.CTkFrame):
             text="✕",
             width=32,
             height=32,
-            font=("Segoe UI", 13, "bold"),
+            font=("Segoe UI", 14, "bold"),
             fg_color=OceanTheme.BG_CARD_ALT,
             hover_color=OceanTheme.CORAL_ALERT,
             text_color=OceanTheme.TEXT_SECONDARY,
-            corner_radius=6,
+            corner_radius=7,
             command=close_overlay
         )
         btn_x.pack(side="right")
 
-        # Paper title
+        # Paper title in prominent font
         title_lbl = ctk.CTkLabel(
             content,
             text=meta.paper_title,
-            font=OceanTheme.FONT_TITLE,
+            font=("Segoe UI", 18, "bold"),
             text_color=OceanTheme.TEXT_PRIMARY,
-            wraplength=580,
+            wraplength=card_w - 50,
             justify="left"
         )
         title_lbl.pack(anchor="w", pady=(0, 6))
 
-        # Citation info
+        # Citation info in larger font
         cite_lbl = ctk.CTkLabel(
             content,
             text=f"Authors: {meta.authors}\nPublished: {meta.year} • {meta.venue}",
-            font=OceanTheme.FONT_BODY,
+            font=("Segoe UI", 13),
             text_color=OceanTheme.AQUA_SECONDARY,
-            wraplength=580,
+            wraplength=card_w - 50,
             justify="left"
         )
         cite_lbl.pack(anchor="w", pady=(0, 10))
 
-        # Abstract box
-        abs_frame = ctk.CTkFrame(content, fg_color=OceanTheme.BG_CARD_ALT, corner_radius=8)
-        abs_frame.pack(fill="both", expand=True, pady=(0, 4))
-
+        # Abstract header
         ctk.CTkLabel(
-            abs_frame,
-            text="PAPER ABSTRACT / SUMMARY",
-            font=OceanTheme.FONT_CAPTION,
+            content,
+            text="📄 PAPER ABSTRACT / SUMMARY",
+            font=("Segoe UI", 11, "bold"),
             text_color=OceanTheme.TEXT_MUTED
-        ).pack(anchor="w", padx=14, pady=(10, 4))
+        ).pack(anchor="w", pady=(0, 4))
 
-        abs_text = ctk.CTkLabel(
-            abs_frame,
-            text=meta.abstract or meta.description,
-            font=OceanTheme.FONT_BODY,
-            text_color=OceanTheme.TEXT_SECONDARY,
-            wraplength=550,
-            justify="left"
+        # Abstract text box with clean margins, word wrapping, and smooth scrolling
+        abs_textbox = ctk.CTkTextbox(
+            content,
+            fg_color=OceanTheme.BG_CARD_ALT,
+            text_color=OceanTheme.TEXT_PRIMARY,
+            font=("Segoe UI", 13),
+            corner_radius=10,
+            wrap="word",
+            activate_scrollbars=True,
+            scrollbar_button_color=OceanTheme.BG_HOVER,
+            scrollbar_button_hover_color=OceanTheme.CYAN_PRIMARY
         )
-        abs_text.pack(anchor="w", padx=14, pady=(0, 10))
+        abs_textbox.pack(fill="both", expand=True, pady=(0, 8))
+        abs_textbox._textbox.configure(padx=10, pady=8, spacing2=3)
+        abs_textbox.insert("1.0", meta.abstract or meta.description)
+        abs_textbox.configure(state="disabled")
+
+        # Footer hint
+        ctk.CTkLabel(
+            content,
+            text="Press [Esc] or click outside to dismiss",
+            font=("Segoe UI", 11),
+            text_color=OceanTheme.TEXT_MUTED
+        ).pack(anchor="e")
