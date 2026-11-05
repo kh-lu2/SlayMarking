@@ -132,7 +132,9 @@ class MethodPanel(ctk.CTkFrame):
             self.container,
             text="⚡ Watermark applied automatically",
             font=OceanTheme.FONT_CAPTION,
-            text_color=OceanTheme.SEAFOAM
+            text_color=OceanTheme.SEAFOAM,
+            wraplength=290,
+            justify="left"
         )
         self.lbl_auto_status.pack(anchor="w", pady=(4, 0))
 
@@ -277,9 +279,14 @@ class MethodPanel(ctk.CTkFrame):
             self.after_cancel(self._debounce_timer)
         self._debounce_timer = self.after(150, self.trigger_apply)
 
-    def set_status(self, text: str, is_error: bool = False):
-        """Updates the status label with success or error styling."""
-        color = OceanTheme.CORAL_ALERT if is_error else OceanTheme.SEAFOAM
+    def set_status(self, text: str, is_error: bool = False, is_warning: bool = False):
+        """Updates the status label with success, warning, or error styling."""
+        if is_error:
+            color = OceanTheme.CORAL_ALERT
+        elif is_warning:
+            color = OceanTheme.AMBER_GLOW
+        else:
+            color = OceanTheme.SEAFOAM
         self.lbl_auto_status.configure(text=text, text_color=color)
 
     def trigger_apply(self):

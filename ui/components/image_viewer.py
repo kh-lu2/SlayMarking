@@ -8,7 +8,7 @@ Features:
 """
 import customtkinter as ctk
 from PIL import Image, ImageDraw
-from typing import Optional
+from typing import Optional, Dict, Any
 from ui.theme import OceanTheme
 
 class ImageViewer(ctk.CTkFrame):
@@ -20,8 +20,14 @@ class ImageViewer(ctk.CTkFrame):
         self.original_image: Optional[Image.Image] = None
         self.watermarked_image: Optional[Image.Image] = None
         self.difference_image: Optional[Image.Image] = None
+        self.attacked_image: Optional[Image.Image] = None
+        self.localized_image: Optional[Image.Image] = None
+        self.recovered_image: Optional[Image.Image] = None
+        self.status_message: str = ""
+        self.split_left_name: str = "Original"
+        self.split_right_name: str = "Watermarked"
         
-        self.view_mode: str = "Split View"   # "Split View", "Watermarked", "Original", "Residual Heatmap"
+        self.view_mode: str = "Split View"   # "Split View", "Attacked", "Localized", "Recovered", "Watermarked", "Original", "Residual Heatmap"
         self.split_ratio: float = 0.50       # 0.0 to 1.0
 
         # Cached display images for instantaneous dragging at native physical device resolution
@@ -123,8 +129,62 @@ class ImageViewer(ctk.CTkFrame):
 
         # Display Container (holds image canvas directly)
         self.display_container = ctk.CTkFrame(self, fg_color="transparent")
-        self.display_container.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+        self.display_container.pack(fill="both", expand=True, padx=12, pady=(0, 8))
         self.display_container.bind("<Configure>", self._on_container_configure)
+
+        # Bottom Status & Verification Banner
+        self.status_banner = ctk.CTkFrame(
+            self,
+            fg_color=OceanTheme.BG_CARD,
+            height=44,
+            corner_radius=8,
+            border_width=1,
+            border_color=OceanTheme.BORDER_SUBTLE
+        )
+        self.status_banner.pack(fill="x", padx=12, pady=(0, 10))
+        self.status_banner.pack_propagate(False)
+
+        self.lbl_status_icon = ctk.CTkLabel(
+            self.status_banner,
+            text="⚡",
+            font=("Segoe UI", 13),
+            text_color=OceanTheme.CYAN_PRIMARY,
+            width=28
+        )
+        self.lbl_status_icon.pack(side="left", padx=(10, 2))
+
+        self.lbl_status_text = ctk.CTkLabel(
+            self.status_banner,
+            text="Ready — Select an image and watermarking parameters",
+            font=OceanTheme.FONT_BODY,
+            text_color=OceanTheme.TEXT_SECONDARY,
+            anchor="w"
+        )
+        self.lbl_status_text.pack(side="left", fill="x", expand=True, padx=(0, 10))
+
+    def _update_status_banner(self, text: str, icon: str = "⚡", color: str = OceanTheme.TEXT_SECONDARY, border_color: str = OceanTheme.BORDER_SUBTLE):
+        """Updates the message and appearance of the status banner."""
+        if hasattr(self, "status_banner") and hasattr(self, "lbl_status_text"):
+            self.lbl_status_icon.configure(text=icon, text_color=color)
+            self.lbl_status_text.configure(text=text, text_color=color)
+            self.status_banner.configure(border_color=border_color)
+
+    def _update_view_modes(self, has_attack: bool):
+        """Dynamically adjusts view modes between standard and tamper-detection/attack modes."""
+        if has_attack:
+            desired_modes = ["Split View", "Attacked", "Localized", "Recovered", "Watermarked", "Original", "Residual Heatmap"]
+        else:
+            desired_modes = ["Split View", "Watermarked", "Original", "Residual Heatmap"]
+
+        current_modes = list(self.seg_mode.cget("values"))
+        if current_modes != desired_modes:
+            curr_selection = self.seg_mode.get()
+            self.seg_mode.configure(values=desired_modes)
+            if curr_selection in desired_modes:
+                self.seg_mode.set(curr_selection)
+            else:
+                self.seg_mode.set("Split View")
+                self.view_mode = "Split View"
 
     def _on_container_configure(self, event):
         """Debounced resize handler ensuring clean re-render on window layout changes."""
@@ -145,14 +205,46 @@ class ImageViewer(ctk.CTkFrame):
         self.original_image = image
         self.watermarked_image = None
         self.difference_image = None
+        self.attacked_image = None
+        self.localized_image = None
+        self.recovered_image = None
         self.clear_error()
+        self._update_view_modes(has_attack=False)
+        self._update_status_banner(f"Cover image loaded: {name} ({image.size[0]}×{image.size[1]})", icon="🌊", color=OceanTheme.AQUA_SECONDARY)
         self._render_current_mode()
 
-    def set_watermark_result(self, watermarked: Image.Image, difference: Image.Image, status_msg: str = ""):
-        """Updates the viewer with newly generated watermarked and difference images."""
+    def set_watermark_result(
+        self,
+        watermarked: Image.Image,
+        difference: Image.Image,
+        status_msg: str = "",
+        attacked: Optional[Image.Image] = None,
+        localized: Optional[Image.Image] = None,
+        recovered: Optional[Image.Image] = None,
+        metrics: Optional[Dict[str, Any]] = None
+    ):
+        """Updates the viewer with newly generated watermarked, difference, and tamper recovery images."""
         self.clear_error()
         self.watermarked_image = watermarked
         self.difference_image = difference
+        self.attacked_image = attacked
+        self.localized_image = localized
+        self.recovered_image = recovered
+        self.status_message = status_msg
+
+        has_attack = (attacked is not None)
+        self._update_view_modes(has_attack=has_attack)
+
+        if has_attack:
+            icon = "🛡️"
+            color = OceanTheme.AMBER_GLOW
+            border = OceanTheme.AMBER_GLOW
+        else:
+            icon = "✓"
+            color = OceanTheme.SEAFOAM
+            border = OceanTheme.BORDER_SUBTLE
+
+        self._update_status_banner(status_msg or "Watermarking applied successfully.", icon=icon, color=color, border_color=border)
         self._render_current_mode()
 
     def show_error(self, message: str, method_name: str = ""):
@@ -161,6 +253,10 @@ class ImageViewer(ctk.CTkFrame):
         self.error_method = method_name
         self.watermarked_image = None
         self.difference_image = None
+        self.attacked_image = None
+        self.localized_image = None
+        self.recovered_image = None
+        self._update_status_banner(f"Error: {message}", icon="❌", color=OceanTheme.CORAL_ALERT, border_color=OceanTheme.CORAL_ALERT)
         self._render_current_mode()
 
     def clear_error(self):
@@ -203,6 +299,18 @@ class ImageViewer(ctk.CTkFrame):
 
         if self.view_mode == "Split View":
             self._render_split_view(container_w, container_h)
+        elif self.view_mode == "Attacked":
+            target = self.attacked_image if self.attacked_image else (self.watermarked_image or self.original_image)
+            title = "Attacked / Tampered Image"
+            self._render_single_image(target, title, container_w, container_h, badge="TAMPERED ATTACK")
+        elif self.view_mode == "Localized":
+            target = self.localized_image if self.localized_image else (self.watermarked_image or self.original_image)
+            title = "Tamper Localization (Detected Blocks Set to Zero)"
+            self._render_single_image(target, title, container_w, container_h, badge="LOCALIZED TAMPER")
+        elif self.view_mode == "Recovered":
+            target = self.recovered_image if self.recovered_image else (self.watermarked_image or self.original_image)
+            title = "Self-Recovered Image (Restored from 32-bit Recovery Bits)"
+            self._render_single_image(target, title, container_w, container_h, badge="SELF-RECOVERED")
         elif self.view_mode == "Watermarked":
             target = self.watermarked_image if self.watermarked_image else self.original_image
             title = "Watermarked Output" if self.watermarked_image else "Watermarked (Showing Original)"
@@ -297,14 +405,31 @@ class ImageViewer(ctk.CTkFrame):
         frame = ctk.CTkFrame(self.display_container, fg_color=OceanTheme.BG_CARD, corner_radius=10)
         frame.pack(fill="both", expand=True)
 
+        # Determine left and right split comparison targets
+        if self.attacked_image is not None and self.recovered_image is not None:
+            left_img = self.attacked_image
+            right_img = self.recovered_image
+            self.split_left_name = "Attacked"
+            self.split_right_name = "Recovered"
+        elif self.recovered_image is not None:
+            left_img = self.original_image
+            right_img = self.recovered_image
+            self.split_left_name = "Original"
+            self.split_right_name = "Recovered"
+        else:
+            left_img = self.original_image
+            right_img = self.watermarked_image if self.watermarked_image else self.original_image
+            self.split_left_name = "Original"
+            self.split_right_name = "Watermarked"
+
         # Header with legend
         header = ctk.CTkFrame(frame, fg_color="transparent")
         header.pack(fill="x", padx=16, pady=(12, 6))
-        ctk.CTkLabel(header, text="Interactive Split View", font=OceanTheme.FONT_SUBTITLE, text_color=OceanTheme.CYAN_PRIMARY).pack(side="left")
+        ctk.CTkLabel(header, text=f"Interactive Split View ({self.split_left_name} vs {self.split_right_name})", font=OceanTheme.FONT_SUBTITLE, text_color=OceanTheme.CYAN_PRIMARY).pack(side="left")
 
         self.lbl_legend = ctk.CTkLabel(
             header,
-            text=f"◀ Original [{int((1 - self.split_ratio)*100)}%]  |  [{int(self.split_ratio*100)}%] Watermarked ▶",
+            text=f"◀ {self.split_left_name} [{int((1 - self.split_ratio)*100)}%]  |  [{int(self.split_ratio*100)}%] {self.split_right_name} ▶",
             font=OceanTheme.FONT_CAPTION,
             text_color=OceanTheme.AQUA_SECONDARY
         )
@@ -333,10 +458,9 @@ class ImageViewer(ctk.CTkFrame):
         self.phys_w = max(int(self.disp_w * scaling), 10)
         self.phys_h = max(int(self.disp_h * scaling), 10)
 
-        # Pre-scale original and watermarked directly from source to physical resolution with LANCZOS
-        self.cached_orig_disp = self.original_image.convert("RGB").resize((self.phys_w, self.phys_h), Image.Resampling.LANCZOS)
-        target_wm = self.watermarked_image if self.watermarked_image else self.original_image
-        self.cached_wm_disp = target_wm.convert("RGB").resize((self.phys_w, self.phys_h), Image.Resampling.LANCZOS)
+        # Pre-scale left and right sources directly to physical resolution with LANCZOS
+        self.cached_orig_disp = left_img.convert("RGB").resize((self.phys_w, self.phys_h), Image.Resampling.LANCZOS)
+        self.cached_wm_disp = right_img.convert("RGB").resize((self.phys_w, self.phys_h), Image.Resampling.LANCZOS)
 
         # Framed container with subtle ocean border
         img_container = ctk.CTkFrame(
@@ -402,7 +526,7 @@ class ImageViewer(ctk.CTkFrame):
 
         if self.lbl_legend:
             self.lbl_legend.configure(
-                text=f"◀ Original [{int((1 - self.split_ratio)*100)}%]  |  [{int(self.split_ratio*100)}%] Watermarked ▶"
+                text=f"◀ {self.split_left_name} [{int((1 - self.split_ratio)*100)}%]  |  [{int(self.split_ratio*100)}%] {self.split_right_name} ▶"
             )
 
         # Fast composite update at physical retina resolution

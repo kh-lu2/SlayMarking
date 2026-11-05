@@ -459,13 +459,16 @@ class Method3(BaseWatermarkMethod):
                 f"Recovered PSNR: {rec_psnr:.2f} dB, Recovered SSIM: {rec_ssim:.4f}."
             )
             return WatermarkResult(
-                watermarked_image=recovered_img,
+                watermarked_image=final_watermarked_img,
                 difference_map=diff_map,
                 metrics=metrics,
                 execution_time=round(elapsed, 4),
                 status="tamper_recovered",
                 message=msg,
-                extracted_payload=f"{watermark_data} (NCC: {ncc_val:.4f})"
+                extracted_payload=f"{watermark_data} (NCC: {ncc_val:.4f})",
+                attacked_image=attacked_img,
+                localized_image=tamper_res["localized_image"],
+                recovered_image=recovered_img
             )
 
         elapsed = time.time() - start_time
