@@ -235,6 +235,14 @@ class ImageViewer(ctk.CTkFrame):
         has_attack = (attacked is not None)
         self._update_view_modes(has_attack=has_attack)
 
+        # Ensure split view is activated for comparison when an attack is applied
+        if has_attack and self.view_mode in ("Watermarked", "Original"):
+            self.view_mode = "Split View"
+            self.seg_mode.set("Split View")
+        elif not has_attack and self.view_mode in ("Attacked", "Localized", "Recovered"):
+            self.view_mode = "Split View"
+            self.seg_mode.set("Split View")
+
         if has_attack:
             icon = "🛡️"
             color = OceanTheme.AMBER_GLOW
@@ -411,6 +419,11 @@ class ImageViewer(ctk.CTkFrame):
             right_img = self.recovered_image
             self.split_left_name = "Attacked"
             self.split_right_name = "Recovered"
+        elif self.attacked_image is not None:
+            left_img = self.attacked_image
+            right_img = self.watermarked_image if self.watermarked_image else self.original_image
+            self.split_left_name = "Attacked"
+            self.split_right_name = "Watermarked"
         elif self.recovered_image is not None:
             left_img = self.original_image
             right_img = self.recovered_image
