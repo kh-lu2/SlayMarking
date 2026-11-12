@@ -181,6 +181,13 @@ class TestMethod3(unittest.TestCase):
         self.assertIn("tampered_blocks", res.metrics)
         self.assertIn("recovered_psnr_db", res.metrics)
         self.assertGreater(res.metrics["recovered_psnr_db"], 30.0)
+        self.assertIsNotNone(res.attacked_image)
+        self.assertIsNotNone(res.localized_image)
+        self.assertIsNotNone(res.recovered_image)
+        self.assertEqual(res.attacked_image.size, img.size)
+        self.assertEqual(res.localized_image.size, img.size)
+        self.assertEqual(res.recovered_image.size, img.size)
+        self.assertIn("Method 3 Active Tamper Detection & Recovery", res.message)
 
     def test_arbitrary_image_dimension(self):
         # Test non-512 image size (e.g. 300x200)
