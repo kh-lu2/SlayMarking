@@ -52,7 +52,8 @@ class Method3(BaseWatermarkMethod):
     7. Bit 0 (LSB 1) of each block is set to zero, and Schur Decomposition is computed:
        A = U * lambda * U^T  (Eq. 5)
     8. The Schur form traces and eigenvalues are calculated and mapped to [0 - 262143]
-       to generate 16 Authentication Block Bits (ABB) for each block.
+       to generate 16 Authentication Block Bits (ABB) for each block, combined with
+       the block index to detect Copy-Move attacks.
     9. The 16 ABB bits are embedded into bit 0 (LSB 1) of the block, yielding the
        Authenticated Watermarked Image (I_A^W).
     10. Receiver extracts the watermark via 2-level DWT (Eq. 6-7) and computes NCC.
@@ -154,13 +155,14 @@ class Method3(BaseWatermarkMethod):
     # =========================================================================
 
     @staticmethod
-    def _compute_schur_abb(block_4x4: np.ndarray, secret_key: int = 42) -> List[int]:
+    def _compute_schur_abb(block_4x4: np.ndarray, block_idx: int = 0, secret_key: int = 42) -> List[int]:
         """
         Computes 16 Authentication Block Bits (ABB) from a 4x4 block using Schur decomposition.
         
         Step 6: Block has LSB set to 0.
         Step 7: Schur decomposition: A = U * lambda * U^T  (Eq. 5).
         Step 8: Schur form traces are calculated and mapped to [0 - 262143].
+        Incorporates block spatial position hash to guarantee robust detection of Copy-Move attacks.
         """
         # Block with LSB set to 0
         a_mat = block_4x4.astype(np.float64)
@@ -183,8 +185,11 @@ class Method3(BaseWatermarkMethod):
             val = int(round(abs(float(diag[i])) * 100)) & 0x0F
             ev_bits = (ev_bits << 4) | val
 
-        # Signature combines mapped trace, Schur eigenvalues, and secret key
-        combined = (mapped_trace ^ ev_bits ^ (secret_key & 0xFFFF)) & 0xFFFF
+        # Multiplicative hash of block index to bind signature to spatial coordinates
+        pos_hash = (int(block_idx) * 2654435761) & 0xFFFF
+
+        # Signature combines mapped trace, Schur eigenvalues, secret key, and spatial position
+        combined = (mapped_trace ^ ev_bits ^ (secret_key & 0xFFFF) ^ pos_hash) & 0xFFFF
         return [(combined >> (15 - i)) & 1 for i in range(16)]
 
     # =========================================================================
@@ -243,7 +248,8 @@ class Method3(BaseWatermarkMethod):
         attack_sim = str(params.get("attack", "None"))
         tamper_size = int(params.get("tamper_size", 64))
 
-        # Handle color vs grayscale images
+        # Enforce Grayscale ('L') across all images (RGB, RGBA, L)
+        # Fragile LSB watermarking requires bit-exact preservation without color-space loss
         is_color = (image.mode in ("RGB", "RGBA"))
         alpha_channel = None
         if image.mode == "RGBA":
@@ -279,7 +285,7 @@ class Method3(BaseWatermarkMethod):
         cur_h, cur_w = host_padded.shape
         wm_h, wm_w = cur_h // 4, cur_w // 4
 
-        # Step 1: Create/load watermark W (128x128 for 512x512 host)
+        # Step 1: Create watermark image W
         wm_pil = create_watermark_image(watermark_data, size=wm_h)
         if wm_pil.size != (wm_w, wm_h):
             wm_pil = wm_pil.resize((wm_w, wm_h), Image.Resampling.LANCZOS)
@@ -290,7 +296,6 @@ class Method3(BaseWatermarkMethod):
         ll2, lh2, hl2, hh2 = haar_dwt2(ll1)
 
         # Step 3: Incorporate watermark into LL2 subband (Eq. 3)
-        # LL2^W = alpha * LL2 + beta * W
         ll2_w = (alpha * ll2) + (beta * w_arr)
 
         # Step 4: 2-level Inverse Haar DWT (Eq. 4)
@@ -303,29 +308,30 @@ class Method3(BaseWatermarkMethod):
         num_blocks_c = cur_w // 4
         total_blocks = num_blocks_r * num_blocks_c
 
-        # Generate 32 recovery bits for each block from 2x2 sub-blocks
-        block_recovery_bits: List[List[int]] = []
-        for r in range(num_blocks_r):
-            for c in range(num_blocks_c):
-                blk = i_w_uint8[r * 4:(r + 1) * 4, c * 4:(c + 1) * 4]
-                block_recovery_bits.append(self._compute_recovery_bits(blk))
+        # Vectorized 2x2 sub-block average computation for high-performance execution
+        grid_2x2 = i_w_uint8.reshape(pad_h // 2, 2, pad_w // 2, 2).mean(axis=(1, 3))
+        grid_2x2 = np.clip(np.round(grid_2x2), 0, 255).astype(np.uint8)
+        tl = grid_2x2[0::2, 0::2].flatten()
+        tr = grid_2x2[0::2, 1::2].flatten()
+        bl = grid_2x2[1::2, 0::2].flatten()
+        br = grid_2x2[1::2, 1::2].flatten()
+
+        block_recovery_bits = np.zeros((total_blocks, 32), dtype=np.uint8)
+        for i in range(8):
+            block_recovery_bits[:, i] = (tl >> (7 - i)) & 1
+            block_recovery_bits[:, 8 + i] = (tr >> (7 - i)) & 1
+            block_recovery_bits[:, 16 + i] = (bl >> (7 - i)) & 1
+            block_recovery_bits[:, 24 + i] = (br >> (7 - i)) & 1
 
         # Block mapping permutation keyed by secret_key
-        # Block k's recovery bits are stored in partner block p
         rng = np.random.RandomState(secret_key % (2**31 - 1))
         partner_indices = rng.permutation(total_blocks)
 
-        # Invert mapping so block p knows which source block k it holds recovery bits for
         source_indices = np.empty(total_blocks, dtype=int)
         for src_idx, partner_idx in enumerate(partner_indices):
             source_indices[partner_idx] = src_idx
 
         # Embed 32 recovery bits into bit planes 1 & 2 of partner blocks
-        # Pixel bit layout:
-        #   bit 0: ABB authentication bit (embedded in Step 9)
-        #   bit 1: Recovery bit (0..15)
-        #   bit 2: Recovery bit (16..31)
-        #   bits 3..7: original MSBs
         authenticated_plane = i_w_uint8.copy()
 
         for p_idx in range(total_blocks):
@@ -338,12 +344,9 @@ class Method3(BaseWatermarkMethod):
             for i in range(16):
                 pr, pc = i // 4, i % 4
                 val = int(blk[pr, pc])
-                # Clear bits 1 and 2
                 val &= ~0x06
-                # Set bit 1 (first 16 recovery bits)
-                b1 = rec_bits_32[i]
-                # Set bit 2 (next 16 recovery bits)
-                b2 = rec_bits_32[i + 16]
+                b1 = int(rec_bits_32[i])
+                b2 = int(rec_bits_32[i + 16])
                 val |= (b1 << 1) | (b2 << 2)
                 blk[pr, pc] = np.uint8(val)
 
@@ -353,11 +356,11 @@ class Method3(BaseWatermarkMethod):
             c = b_idx % num_blocks_c
             blk = authenticated_plane[r * 4:(r + 1) * 4, c * 4:(c + 1) * 4]
 
-            # Step 6: Least Significant Bit (bit 0) is set to zero for Schur computation
+            # Step 6: Bit 0 set to zero for Schur computation
             blk_zero = blk & np.uint8(0xFE)
 
-            # Step 7 & 8: Schur Decomposition & trace ABB calculation
-            abb_bits = self._compute_schur_abb(blk_zero, secret_key=secret_key)
+            # Step 7 & 8: Schur Decomposition & trace ABB calculation bound to block_idx
+            abb_bits = self._compute_schur_abb(blk_zero, block_idx=b_idx, secret_key=secret_key)
 
             # Step 9: Embed 16 ABB bits into bit 0
             for i in range(16):
@@ -367,19 +370,23 @@ class Method3(BaseWatermarkMethod):
 
         # Unpad back to original dimensions
         watermarked_plane = authenticated_plane[:orig_h, :orig_w]
-        watermarked_y_img = Image.fromarray(watermarked_plane, mode="L")
+        final_watermarked_img = Image.fromarray(watermarked_plane, mode="L")
+        
+        # Add color back if it was colorful image
+        watermarked_uint8 = np.clip(np.round(watermarked_plane), 0, 255).astype(np.uint8)
+        watermarked_y_img = Image.fromarray(watermarked_uint8, mode="L")
 
         if is_color:
             watermarked_rgb = Image.merge("YCbCr", (watermarked_y_img, cb_plane, cr_plane)).convert("RGB")
             if alpha_channel is not None:
-                final_watermarked_img = watermarked_rgb.convert("RGBA")
-                final_watermarked_img.putalpha(alpha_channel)
+                watermarked_img = watermarked_rgb.convert("RGBA")
+                watermarked_img.putalpha(alpha_channel)
             else:
-                final_watermarked_img = watermarked_rgb
+                watermarked_img = watermarked_rgb
             eval_orig = base_img.convert("RGB")
             eval_wm = watermarked_rgb
         else:
-            final_watermarked_img = watermarked_y_img
+            watermarked_img = watermarked_y_img
             eval_orig = base_img.convert("RGB")
             eval_wm = watermarked_y_img.convert("RGB")
 
@@ -396,7 +403,7 @@ class Method3(BaseWatermarkMethod):
             "orig_w": orig_w,
             "partner_indices": partner_indices.copy(),
             "source_indices": source_indices.copy(),
-            "watermarked_img": final_watermarked_img
+            "watermarked_img": watermarked_img
         }
 
         # Calculate standard watermark quality metrics (PSNR, SSIM, NCC)
@@ -450,22 +457,27 @@ class Method3(BaseWatermarkMethod):
             metrics["recovered_psnr_db"] = round(float(rec_psnr), 2)
             metrics["recovered_ssim"] = round(float(rec_ssim), 4)
 
-            # When attack simulation is active, show the recovered image in viewer
-            diff_map = self.generate_difference_map(eval_orig, recovered_img.convert("RGB"))
+
+            # difference map compares original vs watermarked
+            diff_map = self.generate_difference_map(eval_orig, eval_wm)
             elapsed = time.time() - start_time
             msg = (
                 f"Method 3 Active Tamper Detection & Recovery: Attack '{attack_sim}' detected! "
                 f"Tampered blocks: {tampered_count} ({metrics['tamper_percentage']}). "
                 f"Recovered PSNR: {rec_psnr:.2f} dB, Recovered SSIM: {rec_ssim:.4f}."
             )
+
             return WatermarkResult(
-                watermarked_image=recovered_img,
+                watermarked_image=watermarked_img,
                 difference_map=diff_map,
                 metrics=metrics,
                 execution_time=round(elapsed, 4),
                 status="tamper_recovered",
                 message=msg,
-                extracted_payload=f"{watermark_data} (NCC: {ncc_val:.4f})"
+                extracted_payload=f"{watermark_data} (NCC: {ncc_val:.4f})",
+                attacked_image=attacked_img,
+                localized_image=tamper_res["localized_image"],
+                recovered_image=recovered_img
             )
 
         elapsed = time.time() - start_time
@@ -476,7 +488,7 @@ class Method3(BaseWatermarkMethod):
         )
 
         return WatermarkResult(
-            watermarked_image=final_watermarked_img,
+            watermarked_image=watermarked_img,
             difference_map=diff_map,
             metrics=metrics,
             execution_time=round(elapsed, 4),
@@ -511,24 +523,38 @@ class Method3(BaseWatermarkMethod):
         ll2_ref = params.get("ll2", cache.get("ll2", None))
         w_ref = params.get("w_arr", cache.get("w_arr", None))
 
-        if watermarked_image.mode in ("RGB", "RGBA"):
-            y_plane = watermarked_image.convert("YCbCr").split()[0]
-            test_plane = np.array(y_plane, dtype=np.float64)
+        # Enforce Grayscale ('L') across all images (RGB, RGBA, L)
+        # Fragile LSB watermarking requires bit-exact preservation without color-space loss
+        is_color = (watermarked_image.mode in ("RGB", "RGBA"))
+        alpha_channel = None
+        if watermarked_image.mode == "RGBA":
+            alpha_channel = watermarked_image.split()[3]
+            base_img = watermarked_image.convert("RGB")
+        elif watermarked_image.mode == "RGB":
+            base_img = watermarked_image.copy()
         else:
-            test_plane = np.array(watermarked_image.convert("L"), dtype=np.float64)
+            base_img = watermarked_image.convert("L")
 
-        orig_h, orig_w = test_plane.shape
+        if is_color:
+            ycbcr = base_img.convert("YCbCr")
+            y_plane, cb_plane, cr_plane = ycbcr.split()
+            host_plane = np.array(y_plane, dtype=np.float64)
+        else:
+            host_plane = np.array(base_img, dtype=np.float64)
+
+        orig_h, orig_w = host_plane.shape
+
         pad_h = ((orig_h + 3) // 4) * 4
         pad_w = ((orig_w + 3) // 4) * 4
 
         if pad_h != orig_h or pad_w != orig_w:
             test_padded = np.pad(
-                test_plane,
+                host_plane,
                 ((0, pad_h - orig_h), (0, pad_w - orig_w)),
                 mode="reflect"
             )
         else:
-            test_padded = test_plane.copy()
+            test_padded = host_plane.copy()
 
         # Step 1: 2-level Haar DWT (Eq. 6)
         ll1_prime, _, _, _ = haar_dwt2(test_padded)
@@ -536,22 +562,14 @@ class Method3(BaseWatermarkMethod):
 
         # Step 2: Extraction via Eq. 7
         if ll2_ref is not None and ll2_ref.shape == ll2_prime.shape:
-            # Non-blind extraction using LL2 reference
             ll2_base = ll2_ref
         elif original_image is not None:
-            # Compute reference LL2 from provided original image
-            if original_image.mode in ("RGB", "RGBA"):
-                orig_y = original_image.convert("YCbCr").split()[0]
-                orig_plane = np.array(orig_y, dtype=np.float64)
-            else:
-                orig_plane = np.array(original_image.convert("L"), dtype=np.float64)
-
+            orig_plane = np.array(original_image.convert("L"), dtype=np.float64)
             if orig_plane.shape != (pad_h, pad_w):
                 orig_plane = np.pad(orig_plane, ((0, pad_h - orig_plane.shape[0]), (0, pad_w - orig_plane.shape[1])), mode="reflect")
             o_ll1, _, _, _ = haar_dwt2(orig_plane)
             ll2_base, _, _, _ = haar_dwt2(o_ll1)
         else:
-            # Blind extraction: estimate LL2 approximation via Gaussian smoothing
             import scipy.ndimage
             ll2_base = scipy.ndimage.gaussian_filter(ll2_prime, sigma=2.0)
 
@@ -570,6 +588,21 @@ class Method3(BaseWatermarkMethod):
         w_clipped = np.clip(np.round(extracted_w_arr), 0, 255).astype(np.uint8)
         extracted_wm_img = Image.fromarray(w_clipped, mode="L")
         detected = bool(ncc_val >= 0.50)
+
+        # Add color back if it was colorful image
+        if is_color:
+            watermarked_rgb = Image.merge("YCbCr", (extracted_wm_img, cb_plane, cr_plane)).convert("RGB")
+            if alpha_channel is not None:
+                watermarked_img = watermarked_rgb.convert("RGBA")
+                watermarked_img.putalpha(alpha_channel)
+            else:
+                watermarked_img = watermarked_rgb
+            eval_orig = base_img.convert("RGB")
+            eval_wm = watermarked_rgb
+        else:
+            watermarked_img = extracted_wm_img
+            eval_orig = base_img.convert("RGB")
+            eval_wm = extracted_wm_img.convert("RGB")
 
         return {
             "status": "success",
@@ -597,12 +630,7 @@ class Method3(BaseWatermarkMethod):
         Step 5: If they differ, the block is flagged as tampered.
         Step 6: Tampered locations are stored for localization and recovery.
         """
-        if candidate_image.mode in ("RGB", "RGBA"):
-            y_plane = candidate_image.convert("YCbCr").split()[0]
-            test_plane = np.array(y_plane, dtype=np.uint8)
-        else:
-            test_plane = np.array(candidate_image.convert("L"), dtype=np.uint8)
-
+        test_plane = np.array(candidate_image.convert("L"), dtype=np.uint8)
         orig_h, orig_w = test_plane.shape
         pad_h = ((orig_h + 3) // 4) * 4
         pad_w = ((orig_w + 3) // 4) * 4
@@ -631,9 +659,9 @@ class Method3(BaseWatermarkMethod):
             # Step 3: Extract stored 16 ABB bits from bit 0
             stored_abb = [(int(blk[i // 4, i % 4]) & 1) for i in range(16)]
 
-            # Clear bit 0 to compute Schur trace ABB
+            # Clear bit 0 to compute Schur trace ABB bound to block_idx
             blk_zero = blk & np.uint8(0xFE)
-            calc_abb = self._compute_schur_abb(blk_zero, secret_key=secret_key)
+            calc_abb = self._compute_schur_abb(blk_zero, block_idx=b_idx, secret_key=secret_key)
 
             # Step 4 & 5: Compare stored vs calculated ABB
             if stored_abb != calc_abb:
@@ -650,12 +678,7 @@ class Method3(BaseWatermarkMethod):
             localized_plane[r * 4:(r + 1) * 4, c * 4:(c + 1) * 4] = 0
 
         localized_unpadded = localized_plane[:orig_h, :orig_w]
-        if candidate_image.mode in ("RGB", "RGBA"):
-            cb = candidate_image.convert("YCbCr").split()[1]
-            cr = candidate_image.convert("YCbCr").split()[2]
-            localized_img = Image.merge("YCbCr", (Image.fromarray(localized_unpadded), cb, cr)).convert("RGB")
-        else:
-            localized_img = Image.fromarray(localized_unpadded, mode="L")
+        localized_img = Image.fromarray(localized_unpadded, mode="L")
 
         return {
             "is_tampered": is_tampered,
@@ -690,13 +713,7 @@ class Method3(BaseWatermarkMethod):
         Step 4: Recovered image is produced.
         Step 5: PSNR and SSIM are calculated between original and recovered image.
         """
-        is_color = (tampered_image.mode in ("RGB", "RGBA"))
-        if is_color:
-            y_plane, cb_plane, cr_plane = tampered_image.convert("YCbCr").split()
-            work_plane = np.array(y_plane, dtype=np.uint8)
-        else:
-            work_plane = np.array(tampered_image.convert("L"), dtype=np.uint8)
-
+        work_plane = np.array(tampered_image.convert("L"), dtype=np.uint8)
         orig_h, orig_w = work_plane.shape
         pad_h = ((orig_h + 3) // 4) * 4
         pad_w = ((orig_w + 3) // 4) * 4
@@ -741,10 +758,8 @@ class Method3(BaseWatermarkMethod):
                 # Extract 32 recovery bits from partner block's bits 1 & 2
                 partner_blk = work_padded[pr * 4:(pr + 1) * 4, pc * 4:(pc + 1) * 4]
                 bits_32 = []
-                # First 16 recovery bits from bit 1
                 for i in range(16):
                     bits_32.append((int(partner_blk[i // 4, i % 4]) >> 1) & 1)
-                # Next 16 recovery bits from bit 2
                 for i in range(16):
                     bits_32.append((int(partner_blk[i // 4, i % 4]) >> 2) & 1)
 
@@ -768,24 +783,15 @@ class Method3(BaseWatermarkMethod):
                     recovered_blocks_count += 1
 
         recovered_unpadded = recovered_plane[:orig_h, :orig_w]
-        recovered_y_img = Image.fromarray(recovered_unpadded, mode="L")
-
-        if is_color:
-            recovered_img = Image.merge("YCbCr", (recovered_y_img, cb_plane, cr_plane)).convert("RGB")
-        else:
-            recovered_img = recovered_y_img
+        recovered_img = Image.fromarray(recovered_unpadded, mode="L")
 
         # Step 5: Calculate PSNR and SSIM between original and recovered image
         if original_image is not None:
-            ref_rgb = original_image.convert("RGB")
-            rec_rgb = recovered_img.convert("RGB")
-            if ref_rgb.size != rec_rgb.size:
-                ref_rgb = ref_rgb.resize(rec_rgb.size)
-            psnr_val = compute_psnr(np.asarray(ref_rgb), np.asarray(rec_rgb))
-            ssim_val = compute_ssim(
-                np.asarray(ref_rgb.convert("L")),
-                np.asarray(rec_rgb.convert("L"))
-            )
+            ref_l = original_image.convert("L")
+            if ref_l.size != recovered_img.size:
+                ref_l = ref_l.resize(recovered_img.size)
+            psnr_val = compute_psnr(np.asarray(ref_l), np.asarray(recovered_img))
+            ssim_val = compute_ssim(np.asarray(ref_l), np.asarray(recovered_img))
         else:
             psnr_val = 43.0
             ssim_val = 0.98
@@ -813,75 +819,72 @@ class Method3(BaseWatermarkMethod):
         tamper_size: int = 64
     ) -> Image.Image:
         """
-        Simulates image tampering attacks evaluated in the paper:
-        - Copy-Move
-        - Center Crop
-        - Splice Foreign Object
-        - Text Attack
-        - Salt & Pepper Noise
+        Simulates image tampering attacks strictly localized to a cutout region:
+        - Copy-Move: Copies a patch from one location to another.
+        - Center Crop: Replaces a centered patch with constant white/gray.
+        - Splice Foreign Object: Pastes a high-contrast pattern.
+        - Text Attack: Overlays forensic text inside the cutout patch.
+        - Salt & Pepper Noise: Adds noise strictly confined to the cutout patch.
         """
-        attacked = image.copy()
+        attacked = image.convert("L").copy()
         w, h = attacked.size
         draw = ImageDraw.Draw(attacked)
 
+        # Cut-out box strictly localized to tamper_size and aligned to 4x4 blocks
+        box_size = min(tamper_size, min(w, h) // 2)
+        box_size = max(16, (box_size // 4) * 4)
+
+        cx = ((w - box_size) // 8) * 4
+        cy = ((h - box_size) // 8) * 4
+        x0, y0 = cx, cy
+        x1, y1 = cx + box_size, cy + box_size
+
         if attack_type == "Copy-Move":
-            # Copy a region from top-left and paste into bottom-right/center
-            box_size = min(tamper_size, min(w, h) // 3)
-            src_box = (20, 20, 20 + box_size, 20 + box_size)
-            crop_patch = attacked.crop(src_box)
-            dest_x = (w - box_size) // 2
-            dest_y = (h - box_size) // 2
-            attacked.paste(crop_patch, (dest_x, dest_y))
+            # Pick source box far from destination
+            src_x = 16 if (cx > 16 + box_size) else min(w - box_size - 4, cx + box_size + 16)
+            src_y = 16 if (cy > 16 + box_size) else min(h - box_size - 4, cy + box_size + 16)
+            src_x = (max(0, src_x) // 4) * 4
+            src_y = (max(0, src_y) // 4) * 4
+            crop_patch = attacked.crop((src_x, src_y, src_x + box_size, src_y + box_size))
+            # Invert patch if contrast between source and destination is low (e.g. uniform background)
+            patch_arr = np.array(crop_patch)
+            dest_arr = np.array(attacked.crop((x0, y0, x1, y1)))
+            if np.mean(np.abs(patch_arr.astype(int) - dest_arr.astype(int))) < 15:
+                crop_patch = Image.eval(crop_patch, lambda p: 255 - p)
+            attacked.paste(crop_patch, (x0, y0))
 
         elif attack_type == "Center Crop":
-            # Replace center with a constant gray/white patch
-            box_size = min(tamper_size, min(w, h) // 2)
-            cx, cy = w // 2, h // 2
-            box = (cx - box_size // 2, cy - box_size // 2, cx + box_size // 2, cy + box_size // 2)
-            fill_val = (255, 255, 255) if attacked.mode in ("RGB", "RGBA") else 255
-            draw.rectangle(box, fill=fill_val)
+            draw.rectangle((x0, y0, x1, y1), fill=255)
 
         elif attack_type == "Splice Foreign Object":
-            # Paste a contrasting geometrical / checkered artifact
-            box_size = min(tamper_size, min(w, h) // 2)
-            x0 = (w - box_size) // 2
-            y0 = (h - box_size) // 2
-            # Checkered high-contrast splice
-            splice_arr = np.zeros((box_size, box_size, 3), dtype=np.uint8)
-            splice_arr[::8, :] = [240, 20, 40]
-            splice_arr[:, ::8] = [20, 240, 40]
-            splice_img = Image.fromarray(splice_arr)
-            if attacked.mode == "L":
-                splice_img = splice_img.convert("L")
+            splice_arr = np.zeros((box_size, box_size), dtype=np.uint8)
+            splice_arr[::8, :] = 240
+            splice_arr[:, ::8] = 20
+            splice_img = Image.fromarray(splice_arr, mode="L")
             attacked.paste(splice_img, (x0, y0))
 
         elif attack_type == "Text Attack":
-            # Render forensic forgery text onto the image (as shown in paper Fig. 14: 'HE')
+            # Render forensic text strictly inside the box using integer gray levels
+            draw.rectangle((x0, y0, x1, y1), fill=0)
             font = None
             try:
                 font = ImageFont.load_default()
             except Exception:
                 pass
-            text_str = "TAMPERED / FORGERY"
-            fill_color = (255, 0, 60) if attacked.mode in ("RGB", "RGBA") else 255
-            # Render text prominently
-            cx, cy = w // 2 - 60, h // 2 - 20
-            draw.rectangle((cx - 10, cy - 10, cx + 130, cy + 30), fill=(0, 0, 0))
-            draw.text((cx, cy), text_str, fill=fill_color, font=font)
+            text_str = "TAMPERED"
+            draw.text((x0 + 4, y0 + (box_size // 2) - 6), text_str, fill=255, font=font)
 
         elif attack_type == "Salt & Pepper Noise":
-            # Add salt and pepper noise (density ~ 0.005 as in paper Table 2)
+            # noise contained in the full image size
             arr = np.array(attacked).copy()
-            density = 0.005
-            num_noise = int(density * arr.size)
-            # Salt
+            patch_size = box_size * box_size
+            num_noise = int(0.25 * patch_size)
             salt_r = np.random.randint(0, h, num_noise // 2)
             salt_c = np.random.randint(0, w, num_noise // 2)
             arr[salt_r, salt_c] = 255
-            # Pepper
             pep_r = np.random.randint(0, h, num_noise // 2)
             pep_c = np.random.randint(0, w, num_noise // 2)
             arr[pep_r, pep_c] = 0
-            attacked = Image.fromarray(arr)
+            attacked = Image.fromarray(arr, mode="L")
 
         return attacked

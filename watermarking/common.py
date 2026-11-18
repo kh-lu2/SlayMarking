@@ -269,3 +269,374 @@ def compute_metrics(original: Image.Image, watermarked: Image.Image) -> Dict[str
         "mae": round(mae, 4),
         "ncc": round(ncc, 4),
     }
+
+
+# =========================================================================
+# Bit-Plane Manipulation Helpers
+# =========================================================================
+
+def extract_bit_plane(image_arr: np.ndarray, plane: int) -> np.ndarray:
+    """Extracts a binary bit plane (0 or 1) from an integer image array."""
+    return ((image_arr.astype(np.uint8) >> plane) & 1).astype(np.uint8)
+
+
+def set_bit_plane(image_arr: np.ndarray, plane: int, bits: np.ndarray) -> np.ndarray:
+    """
+    Overwrites the specified bit plane of image_arr with bits (0 or 1).
+    Safely avoids negative overflow in uint8 arithmetic.
+    """
+    arr = image_arr.astype(np.uint8).copy()
+    mask = np.uint8(0xFF ^ (1 << plane))
+    arr = (arr & mask) | ((bits.astype(np.uint8) & 1) << plane)
+    return arr
+
+
+# =========================================================================
+# Binary Watermark Generator (Crisp Logos / Emblems)
+# =========================================================================
+
+def create_binary_watermark(watermark_data: str, height: int = 64, width: int = 128) -> np.ndarray:
+    """
+    Generates a 2D binary numpy array of shape (height, width) with values {0, 1}.
+    If watermark_data is an existing image path, loads, resizes, and binarizes it.
+    Otherwise renders a crisp binary text logo / emblem with high contrast.
+    """
+    if os.path.isfile(watermark_data):
+        try:
+            img = Image.open(watermark_data).convert("L")
+            img = img.resize((width, height), Image.Resampling.LANCZOS)
+            arr = np.asarray(img, dtype=np.uint8)
+            th = np.mean(arr)
+            return (arr > th).astype(np.uint8)
+        except Exception:
+            pass
+
+    # Render text logo
+    img = Image.new("L", (width, height), color=0)
+    draw = ImageDraw.Draw(img)
+
+    # Outer decorative frame
+    draw.rectangle((1, 1, width - 2, height - 2), outline=255, width=1)
+    if width >= 32 and height >= 32:
+        draw.rectangle((3, 3, width - 4, height - 4), outline=255, width=1)
+
+    # Format text payload
+    clean_text = str(watermark_data).strip()
+    if not clean_text:
+        clean_text = "SKKU"
+
+    lines = clean_text.split("\n")
+    if len(lines) == 1 and len(clean_text) > 8:
+        mid = len(clean_text) // 2
+        lines = [clean_text[:mid].strip(), clean_text[mid:].strip()]
+
+    font = ImageFont.load_default()
+
+    total_text_h = len(lines) * 12
+    start_y = max(4, (height - total_text_h) // 2)
+
+    for i, line in enumerate(lines):
+        bbox = draw.textbbox((0, 0), line, font=font)
+        tw = bbox[2] - bbox[0]
+        tx = max(4, (width - tw) // 2)
+        ty = start_y + i * 14
+        draw.text((tx, ty), line, fill=255, font=font)
+
+    binary_arr = (np.asarray(img, dtype=np.uint8) > 128).astype(np.uint8)
+    return binary_arr
+
+
+# =========================================================================
+# Adaptive Order-0 Arithmetic Coder (CACM / Moffat et al. [15, 16])
+# =========================================================================
+
+class _FenwickTree:
+    """Binary Indexed Tree (Fenwick Tree) for O(log N) cumulative frequencies."""
+
+    def __init__(self, size: int):
+        self.size = size
+        self.tree = [0] * (size + 1)
+        self.counts = [0] * size
+
+    def add(self, idx: int, val: int):
+        self.counts[idx] += val
+        i = idx + 1
+        while i <= self.size:
+            self.tree[i] += val
+            i += i & (-i)
+
+    def prefix_sum(self, idx: int) -> int:
+        if idx < 0:
+            return 0
+        if idx >= self.size:
+            idx = self.size - 1
+        s = 0
+        i = idx + 1
+        while i > 0:
+            s += self.tree[i]
+            i -= i & (-i)
+        return s
+
+    def find_symbol(self, target_cum: int) -> int:
+        """Finds lowest symbol index with prefix_sum(sym) > target_cum using binary lifting."""
+        idx = 0
+        current_sum = 0
+        power = 1 << (self.size.bit_length() - 1)
+        while power > 0:
+            next_idx = idx + power
+            if next_idx <= self.size and current_sum + self.tree[next_idx] <= target_cum:
+                idx = next_idx
+                current_sum += self.tree[idx]
+            power >>= 1
+        return idx
+
+
+class AdaptiveArithmeticCoder:
+    """
+    Adaptive order-0 arithmetic coder using 32-bit integer registers and
+    a Fenwick tree for O(log 256) cumulative frequency maintenance.
+    Appends EOF symbol (256) for deterministic decoding termination without
+    external length signaling.
+    """
+
+    PRECISION = 32
+    MAX_VAL = (1 << PRECISION) - 1
+    HALF = 1 << (PRECISION - 1)
+    Q1 = 1 << (PRECISION - 2)
+    Q3 = 3 * Q1
+    EOF_SYM = 256
+
+    @classmethod
+    def encode(cls, data: bytes) -> bytes:
+        """Encodes arbitrary bytes into an arithmetically compressed byte string."""
+        if not data:
+            return b""
+
+        ft = _FenwickTree(257)
+        for i in range(257):
+            ft.add(i, 1)
+
+        low = 0
+        high = cls.MAX_VAL
+        underflow = 0
+        out_bits = []
+
+        def output_bit(b: int):
+            nonlocal underflow
+            out_bits.append(b)
+            while underflow > 0:
+                out_bits.append(1 - b)
+                underflow -= 1
+
+        for sym in list(data) + [cls.EOF_SYM]:
+            total = ft.prefix_sum(cls.EOF_SYM)
+            low_cum = ft.prefix_sum(sym - 1)
+            high_cum = ft.prefix_sum(sym)
+            rng = high - low + 1
+            high = low + (rng * high_cum) // total - 1
+            low = low + (rng * low_cum) // total
+            ft.add(sym, 1)
+
+            while True:
+                if high < cls.HALF:
+                    output_bit(0)
+                    low = (low << 1) & cls.MAX_VAL
+                    high = ((high << 1) | 1) & cls.MAX_VAL
+                elif low >= cls.HALF:
+                    output_bit(1)
+                    low = ((low - cls.HALF) << 1) & cls.MAX_VAL
+                    high = (((high - cls.HALF) << 1) | 1) & cls.MAX_VAL
+                elif low >= cls.Q1 and high < cls.Q3:
+                    underflow += 1
+                    low = ((low - cls.Q1) << 1) & cls.MAX_VAL
+                    high = (((high - cls.Q1) << 1) | 1) & cls.MAX_VAL
+                else:
+                    break
+
+        underflow += 1
+        if low < cls.Q1:
+            output_bit(0)
+        else:
+            output_bit(1)
+
+        out_bytes = bytearray()
+        for i in range(0, len(out_bits), 8):
+            chunk = out_bits[i:i + 8]
+            b_val = 0
+            for bit in chunk:
+                b_val = (b_val << 1) | bit
+            b_val <<= (8 - len(chunk))
+            out_bytes.append(b_val)
+        return bytes(out_bytes)
+
+    @classmethod
+    def decode(cls, enc_bytes: bytes) -> bytes:
+        """Decodes arithmetically compressed bytes back to original bytes."""
+        if not enc_bytes:
+            return b""
+
+        ft = _FenwickTree(257)
+        for i in range(257):
+            ft.add(i, 1)
+
+        low = 0
+        high = cls.MAX_VAL
+
+        in_bits = []
+        for b in enc_bytes:
+            for shift in range(7, -1, -1):
+                in_bits.append((b >> shift) & 1)
+
+        bit_idx = 0
+        value = 0
+        for _ in range(cls.PRECISION):
+            b = in_bits[bit_idx] if bit_idx < len(in_bits) else 0
+            bit_idx += 1
+            value = (value << 1) | b
+
+        decoded = bytearray()
+        while True:
+            total = ft.prefix_sum(cls.EOF_SYM)
+            rng = high - low + 1
+            scaled = ((value - low + 1) * total - 1) // rng
+            sym = ft.find_symbol(scaled)
+
+            if sym == cls.EOF_SYM:
+                break
+            decoded.append(sym)
+
+            low_cum = ft.prefix_sum(sym - 1)
+            high_cum = ft.prefix_sum(sym)
+            high = low + (rng * high_cum) // total - 1
+            low = low + (rng * low_cum) // total
+            ft.add(sym, 1)
+
+            while True:
+                if high < cls.HALF:
+                    pass
+                elif low >= cls.HALF:
+                    value -= cls.HALF
+                    low -= cls.HALF
+                    high -= cls.HALF
+                elif low >= cls.Q1 and high < cls.Q3:
+                    value -= cls.Q1
+                    low -= cls.Q1
+                    high -= cls.Q1
+                else:
+                    break
+                b = in_bits[bit_idx] if bit_idx < len(in_bits) else 0
+                bit_idx += 1
+                value = ((value << 1) | b) & cls.MAX_VAL
+                low = (low << 1) & cls.MAX_VAL
+                high = ((high << 1) | 1) & cls.MAX_VAL
+
+        return bytes(decoded)
+
+
+# =========================================================================
+# 80-Bit User Key Packing / Unpacking (Hu & Jeon 2006, Section II-D.1)
+# =========================================================================
+
+def pack_user_key_80bit(
+    h_w: int,
+    w_w: int,
+    r0: int,
+    c0: int,
+    d_c_len: int,
+    n_ik: int,
+    hybrid: int,
+    s_p: int,
+    n: int
+) -> str:
+    """
+    Packs the 80-bit user key from Section II-D.1 Step 7 into a 20-character hex string:
+    - Watermark size: 16 bits (h_w: 8 bits, w_w: 8 bits)
+    - Origin of region R: 32 bits (r0: 16 bits, c0: 16 bits)
+    - Compressed D size |D_c|: 16 bits
+    - Key bit plane level N_{I_k}: 3 bits
+    - Hybrid/fixed flag: 1 bit
+    - Selection step S_p: 4 bits
+    - Skip points n: 8 bits
+    Total = 80 bits (10 bytes = 20 hex characters).
+    """
+    key_bytes = bytearray(10)
+    key_bytes[0] = h_w & 0xFF
+    key_bytes[1] = w_w & 0xFF
+    key_bytes[2] = (r0 >> 8) & 0xFF
+    key_bytes[3] = r0 & 0xFF
+    key_bytes[4] = (c0 >> 8) & 0xFF
+    key_bytes[5] = c0 & 0xFF
+    key_bytes[6] = (d_c_len >> 8) & 0xFF
+    key_bytes[7] = d_c_len & 0xFF
+    key_bytes[8] = ((n_ik & 0x7) << 5) | ((hybrid & 0x1) << 4) | (s_p & 0xF)
+    key_bytes[9] = n & 0xFF
+    return key_bytes.hex().upper()
+
+
+def unpack_user_key_80bit(key_hex: str) -> Dict[str, int]:
+    """
+    Unpacks an 80-bit user key (20-character hex string) into its component parameters.
+    """
+    clean_hex = key_hex.strip().replace(" ", "").replace("0x", "")
+    if len(clean_hex) != 20:
+        raise ValueError(f"User key must be exactly 80 bits (20 hex characters), got {len(clean_hex)} characters.")
+
+    key_bytes = bytes.fromhex(clean_hex)
+    h_w = key_bytes[0]
+    w_w = key_bytes[1]
+    # Handle 256 dimension wrap-around if 0 is stored for 256
+    if h_w == 0:
+        h_w = 256
+    if w_w == 0:
+        w_w = 256
+
+    r0 = (key_bytes[2] << 8) | key_bytes[3]
+    c0 = (key_bytes[4] << 8) | key_bytes[5]
+    d_c_len = (key_bytes[6] << 8) | key_bytes[7]
+    b8 = key_bytes[8]
+    n_ik = (b8 >> 5) & 0x7
+    hybrid = (b8 >> 4) & 0x1
+    s_p = b8 & 0xF
+    n = key_bytes[9]
+
+    return {
+        "h_w": h_w,
+        "w_w": w_w,
+        "r0": r0,
+        "c0": c0,
+        "d_c_len": d_c_len,
+        "n_ik": n_ik,
+        "hybrid": hybrid,
+        "s_p": s_p,
+        "n": n
+    }
+
+
+def compute_psnr_without_region(
+    original: np.ndarray,
+    watermarked: np.ndarray,
+    r0: int,
+    c0: int,
+    hr: int,
+    wr: int,
+    max_val: float = 255.0
+) -> float:
+    """
+    Computes PSNR excluding the protected watermark region R,
+    as reported in Table I of Hu & Jeon 2006.
+    """
+    orig_f = original.astype(np.float64)
+    wm_f = watermarked.astype(np.float64)
+
+    mask = np.ones(orig_f.shape[:2], dtype=bool)
+    mask[r0:r0 + hr, c0:c0 + wr] = False
+
+    if not np.any(mask):
+        return compute_psnr(orig_f, wm_f, max_val=max_val)
+
+    diff_sq = (orig_f[mask] - wm_f[mask]) ** 2
+    mse = float(np.mean(diff_sq))
+    if mse <= 1e-12:
+        return 99.99
+    return float(20.0 * np.log10(max_val / np.sqrt(mse)))
+

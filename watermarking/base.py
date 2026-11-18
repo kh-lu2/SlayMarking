@@ -47,6 +47,9 @@ class WatermarkResult:
     status: str = "success"
     message: str = "Watermarking completed successfully (placeholder simulation)."
     extracted_payload: Optional[str] = None
+    attacked_image: Optional[Image.Image] = None
+    localized_image: Optional[Image.Image] = None
+    recovered_image: Optional[Image.Image] = None
 
 class BaseWatermarkMethod(ABC):
     """Abstract base class that all 6 watermarking methods implement."""
