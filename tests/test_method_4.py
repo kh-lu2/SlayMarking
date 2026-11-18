@@ -138,6 +138,48 @@ class TestMethod4(unittest.TestCase):
         gray_entropy = self.method.compute_entropy(enc_gray)
         self.assertGreater(gray_entropy, 7.8)
 
+    def test_honey_encryption_wrong_key_produces_decoy(self):
+        """
+        Demonstrates the core Honey Encryption property:
+        - Correct key recovers the exact watermark (NC ~ 1.0).
+        - Wrong keys do not fail or error out; they yield valid, distinct 256x256
+          plausible decoy ('honey') images with low correlation to the true watermark.
+        """
+        cover_img = Image.open("assets/examples/diver.jpg").convert("L").resize((512, 512))
+        true_params = {"l_rounds": 4, "he_key_seed": 42, "bits_per_coeff": 2}
+        result = self.method.embed(cover_img, "TOP SECRET", true_params)
+
+        # 1. Correct key -> exact recovery
+        true_ext = self.method.extract(result.watermarked_image, params=true_params)
+        self.assertEqual(true_ext["status"], "success")
+        self.assertAlmostEqual(true_ext["nc"], 1.0, places=4)
+        true_arr = np.asarray(true_ext["extracted_image"], dtype=np.uint8)
+
+        # 2. Wrong keys -> valid 256x256 decoy images, no error, low NC
+        decoy_1_res = self.method.extract(
+            result.watermarked_image, params={"l_rounds": 4, "he_key_seed": 99}
+        )
+        decoy_2_res = self.method.extract(
+            result.watermarked_image, params={"l_rounds": 4, "he_key_seed": 123}
+        )
+
+        for decoy_res in (decoy_1_res, decoy_2_res):
+            self.assertEqual(decoy_res["status"], "success")
+            self.assertEqual(decoy_res["extracted_image"].size, (256, 256))
+            self.assertEqual(decoy_res["extracted_image"].mode, "L")
+            self.assertLess(decoy_res["nc"], 0.92)
+            decoy_arr = np.asarray(decoy_res["extracted_image"], dtype=np.float64)
+            pearson = np.corrcoef(true_arr.flatten(), decoy_arr.flatten())[0, 1]
+            self.assertLess(abs(pearson), 0.05)
+
+        decoy_1 = np.asarray(decoy_1_res["extracted_image"], dtype=np.uint8)
+        decoy_2 = np.asarray(decoy_2_res["extracted_image"], dtype=np.uint8)
+
+        # Decoys differ from both the true watermark and from each other
+        self.assertFalse(np.array_equal(decoy_1, true_arr))
+        self.assertFalse(np.array_equal(decoy_1, decoy_2))
+        self.assertGreater(self.method.compute_entropy(decoy_1), 3.0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -108,12 +108,30 @@ class SlayMarkingApp(ctk.CTk):
                 self._handle_watermark_error(method, result.message)
                 return
 
+            # Extract decoded watermark if supported by method (e.g. Method 4)
+            decoded_wm = None
+            decoded_badge = "DECODED WATERMARK"
+            if method.get_metadata().method_id == "method_4":
+                try:
+                    ext = method.extract(
+                        result.watermarked_image,
+                        original_image=self.current_cover_image,
+                        params=params
+                    )
+                    decoded_wm = ext.get("extracted_image")
+                    if decoded_wm is not None:
+                        decoded_badge = f"DECODED 256×256 • NC: {ext.get('nc', 1.0):.4f}"
+                except Exception:
+                    pass
+
             # Update viewer with watermarked output and amplified difference residual map
             self.viewer.clear_error()
             self.viewer.set_watermark_result(
                 watermarked=result.watermarked_image,
                 difference=result.difference_map,
-                status_msg=result.message
+                status_msg=result.message,
+                decoded_watermark=decoded_wm,
+                decoded_badge=decoded_badge
             )
             self.method_panel.set_status(f"✓ {method.get_metadata().short_name} applied", is_error=False)
 

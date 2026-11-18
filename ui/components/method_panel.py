@@ -6,6 +6,9 @@ Features:
 - Ample room for method selector and 'ℹ️ Info' modal button without text truncation.
 - Dynamic parameters without text clipping.
 """
+import os
+import shutil
+from tkinter import filedialog
 import customtkinter as ctk
 from PIL import Image
 from typing import Callable, Dict, Any, Optional
@@ -28,6 +31,9 @@ class MethodPanel(ctk.CTkFrame):
         self.grid_propagate(False)
 
         self.on_apply_watermark = on_apply_watermark
+        self.wm_dir = os.path.join("assets", "watermarks")
+        self.wm_files: list[str] = []
+        self.selected_wm_path: str = ""
 
         self.methods = registry.list_methods()
         self.current_method_idx: int = 0
@@ -93,16 +99,19 @@ class MethodPanel(ctk.CTkFrame):
         self.btn_info_bump.pack(side="right")
 
         # 2. Watermark Payload Input
-        sec_payload = ctk.CTkLabel(
+        self.sec_payload = ctk.CTkLabel(
             self.container,
             text="🔑 WATERMARK PAYLOAD / KEY",
             font=OceanTheme.FONT_SUBTITLE,
             text_color=OceanTheme.CYAN_PRIMARY
         )
-        sec_payload.pack(anchor="w", pady=(0, 6))
+        self.sec_payload.pack(anchor="w", pady=(0, 6))
+
+        self.payload_slot = ctk.CTkFrame(self.container, fg_color="transparent")
+        self.payload_slot.pack(fill="x", pady=(0, 16))
 
         self.entry_payload = ctk.CTkEntry(
-            self.container,
+            self.payload_slot,
             placeholder_text="Enter secret watermark string or cryptographic key...",
             font=OceanTheme.FONT_BODY,
             fg_color=OceanTheme.BG_INPUT,
@@ -112,8 +121,48 @@ class MethodPanel(ctk.CTkFrame):
             height=36
         )
         self.entry_payload.insert(0, "© SLAYMARKING 2026 / ABYSS")
-        self.entry_payload.pack(fill="x", pady=(0, 16))
+        self.entry_payload.pack(fill="x")
         self.entry_payload.bind("<KeyRelease>", lambda e: self._schedule_auto_apply())
+
+        # Method 4 Watermark Image Picker
+        self.wm_picker_frame = ctk.CTkFrame(self.payload_slot, fg_color=OceanTheme.BG_CARD_ALT, corner_radius=8)
+        wm_top = ctk.CTkFrame(self.wm_picker_frame, fg_color="transparent")
+        wm_top.pack(fill="x", padx=8, pady=(8, 6))
+
+        self.lbl_wm_thumb = ctk.CTkLabel(wm_top, text="", width=44, height=44)
+        self.lbl_wm_thumb.pack(side="left", padx=(0, 8))
+
+        self.opt_wm_image = ctk.CTkOptionMenu(
+            wm_top,
+            values=["(none)"],
+            font=OceanTheme.FONT_BODY,
+            fg_color=OceanTheme.BG_HOVER,
+            button_color=OceanTheme.NAVY_DEEP,
+            button_hover_color=OceanTheme.AQUA_SECONDARY,
+            dropdown_fg_color=OceanTheme.BG_CARD_ALT,
+            dropdown_hover_color=OceanTheme.BG_ACTIVE,
+            dropdown_text_color=OceanTheme.TEXT_PRIMARY,
+            text_color=OceanTheme.TEXT_PRIMARY,
+            corner_radius=6,
+            height=32,
+            dynamic_resizing=False,
+            command=self._on_wm_image_selected
+        )
+        self.opt_wm_image.pack(side="left", fill="x", expand=True)
+
+        self.btn_add_wm = ctk.CTkButton(
+            self.wm_picker_frame,
+            text="➕ Add Image to Hide",
+            height=32,
+            font=OceanTheme.FONT_BODY_BOLD,
+            fg_color=OceanTheme.NAVY_DEEP,
+            hover_color=OceanTheme.AQUA_SECONDARY,
+            text_color=OceanTheme.TEXT_PRIMARY,
+            corner_radius=6,
+            command=self._on_add_wm_image
+        )
+        self.btn_add_wm.pack(fill="x", padx=8, pady=(0, 8))
+        self._refresh_wm_images()
 
         # 3. Dynamic Algorithm Parameters
         sec_params = ctk.CTkLabel(
@@ -145,8 +194,63 @@ class MethodPanel(ctk.CTkFrame):
         self.current_method_idx = index
         method = self.methods[index]
         self._build_parameters_ui(method)
+        if method.get_metadata().method_id == "method_4":
+            self.sec_payload.configure(text="🖼️ IMAGE TO HIDE (256×256)")
+            self.entry_payload.pack_forget()
+            self.wm_picker_frame.pack(fill="x")
+        else:
+            self.sec_payload.configure(text="🔑 WATERMARK PAYLOAD / KEY")
+            self.wm_picker_frame.pack_forget()
+            self.entry_payload.pack(fill="x")
         if trigger_apply:
             self.trigger_apply()
+
+    def _refresh_wm_images(self, select_name: Optional[str] = None):
+        os.makedirs(self.wm_dir, exist_ok=True)
+        valid_exts = (".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".webp")
+        self.wm_files = sorted(
+            f for f in os.listdir(self.wm_dir) if f.lower().endswith(valid_exts)
+        )
+        if not self.wm_files:
+            self.opt_wm_image.configure(values=["(none)"])
+            self.opt_wm_image.set("(none)")
+            self.selected_wm_path = ""
+            return
+        self.opt_wm_image.configure(values=self.wm_files)
+        chosen = select_name if select_name in self.wm_files else self.wm_files[0]
+        self.opt_wm_image.set(chosen)
+        self._on_wm_image_selected(chosen, trigger=False)
+
+    def _on_wm_image_selected(self, filename: str, trigger: bool = True):
+        if filename == "(none)" or not filename:
+            return
+        path = os.path.join(self.wm_dir, filename)
+        if os.path.isfile(path):
+            self.selected_wm_path = path
+            try:
+                thumb = Image.open(path).convert("L").resize((44, 44), Image.Resampling.LANCZOS)
+                ctk_thumb = ctk.CTkImage(light_image=thumb, dark_image=thumb, size=(44, 44))
+                self.lbl_wm_thumb.configure(image=ctk_thumb)
+                self.lbl_wm_thumb.image = ctk_thumb
+            except Exception:
+                pass
+            if trigger:
+                self.trigger_apply()
+
+    def _on_add_wm_image(self):
+        file_path = filedialog.askopenfilename(
+            title="Select Image to Hide (256×256)",
+            filetypes=[("Image Files", "*.png *.jpg *.jpeg *.bmp *.tiff *.webp"), ("All Files", "*.*")]
+        )
+        if not file_path:
+            return
+        os.makedirs(self.wm_dir, exist_ok=True)
+        dest_name = os.path.basename(file_path)
+        dest_path = os.path.join(self.wm_dir, dest_name)
+        if os.path.abspath(file_path) != os.path.abspath(dest_path):
+            shutil.copy2(file_path, dest_path)
+        self._refresh_wm_images(select_name=dest_name)
+        self.trigger_apply()
 
     def _build_parameters_ui(self, method: BaseWatermarkMethod):
         for widget in self.params_container.winfo_children():
@@ -286,7 +390,10 @@ class MethodPanel(ctk.CTkFrame):
         """Immediately applies watermark."""
         self._debounce_timer = None
         method = self.methods[self.current_method_idx]
-        payload = self.entry_payload.get().strip() or "DEFAULT_WATERMARK"
+        if method.get_metadata().method_id == "method_4" and self.selected_wm_path:
+            payload = self.selected_wm_path
+        else:
+            payload = self.entry_payload.get().strip() or "DEFAULT_WATERMARK"
         self.lbl_auto_status.configure(text="⚡ Applying watermark...", text_color=OceanTheme.AQUA_SECONDARY)
         self.on_apply_watermark(method, payload, self.param_values)
 
@@ -417,3 +524,4 @@ class MethodPanel(ctk.CTkFrame):
             font=("Segoe UI", 11),
             text_color=OceanTheme.TEXT_MUTED
         ).pack(anchor="e")
+

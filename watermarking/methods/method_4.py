@@ -616,17 +616,19 @@ class Method4(BaseWatermarkMethod):
         he_key_seed = int(p.get("he_key_seed", 42))
 
         state = self._last_state
-        if state is not None:
+        if state is not None and (
+            "he_key_seed" not in p or int(p["he_key_seed"]) == state["he_key_seed"]
+        ):
             he_key = state["he_key"]
             z_matrix = state["z_matrix"]
-            l_rounds = state["l_rounds"]
+            l_rounds = int(p.get("l_rounds", state["l_rounds"]))
             orig_wm = state["orig_watermark"]
         else:
             # Reconstruct z_matrix and default key from parameter seed
             he_key = he_key_seed % 256
             rng = np.random.RandomState(he_key ^ (he_key_seed << 1) ^ 0xA5)
             z_matrix = rng.randint(0, 2, (4, 256, 256), dtype=np.uint8)
-            orig_wm = None
+            orig_wm = state["orig_watermark"] if state is not None else None
 
         # Step 1: 2D Haar DWT extraction across subbands
         wm_arr = np.asarray(watermarked_image, dtype=np.uint8)

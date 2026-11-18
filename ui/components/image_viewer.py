@@ -109,7 +109,7 @@ class ImageViewer(ctk.CTkFrame):
 
         self.seg_mode = ctk.CTkSegmentedButton(
             toolbar,
-            values=["Split View", "Watermarked", "Original", "Residual Heatmap"],
+            values=["Split View", "Watermarked", "Original", "Residual Heatmap", "Decoded Watermark"],
             font=OceanTheme.FONT_BODY,
             selected_color=OceanTheme.OCEAN_BLUE,
             selected_hover_color=OceanTheme.AQUA_SECONDARY,
@@ -145,14 +145,25 @@ class ImageViewer(ctk.CTkFrame):
         self.original_image = image
         self.watermarked_image = None
         self.difference_image = None
+        self.decoded_watermark_image = None
+        self.decoded_watermark_badge = "DECODED WATERMARK"
         self.clear_error()
         self._render_current_mode()
 
-    def set_watermark_result(self, watermarked: Image.Image, difference: Image.Image, status_msg: str = ""):
-        """Updates the viewer with newly generated watermarked and difference images."""
+    def set_watermark_result(
+        self,
+        watermarked: Image.Image,
+        difference: Image.Image,
+        status_msg: str = "",
+        decoded_watermark: Optional[Image.Image] = None,
+        decoded_badge: str = "DECODED WATERMARK"
+    ):
+        """Updates the viewer with newly generated watermarked, difference, and decoded images."""
         self.clear_error()
         self.watermarked_image = watermarked
         self.difference_image = difference
+        self.decoded_watermark_image = decoded_watermark
+        self.decoded_watermark_badge = decoded_badge
         self._render_current_mode()
 
     def show_error(self, message: str, method_name: str = ""):
@@ -161,6 +172,7 @@ class ImageViewer(ctk.CTkFrame):
         self.error_method = method_name
         self.watermarked_image = None
         self.difference_image = None
+        self.decoded_watermark_image = None
         self._render_current_mode()
 
     def clear_error(self):
@@ -213,6 +225,23 @@ class ImageViewer(ctk.CTkFrame):
             target = self.difference_image if self.difference_image else self._generate_blank_diff()
             title = "Watermark Residual Heatmap" if self.difference_image else "Residual Heatmap"
             self._render_single_image(target, title, container_w, container_h, badge="AMPLIFIED RESIDUALS")
+        elif self.view_mode == "Decoded Watermark":
+            if getattr(self, "decoded_watermark_image", None) is not None:
+                self._render_single_image(
+                    self.decoded_watermark_image,
+                    "Decoded Watermark",
+                    container_w,
+                    container_h,
+                    badge=getattr(self, "decoded_watermark_badge", "DECODED WATERMARK")
+                )
+            else:
+                self._render_single_image(
+                    self._generate_blank_diff(),
+                    "Decoded Watermark (Not available for this method)",
+                    container_w,
+                    container_h,
+                    badge="UNAVAILABLE"
+                )
 
     def _render_error_view(self, total_w: int, total_h: int):
         """Renders a compact, high-legibility error card centered in the viewer."""
