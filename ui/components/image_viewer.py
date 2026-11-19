@@ -115,7 +115,7 @@ class ImageViewer(ctk.CTkFrame):
 
         self.seg_mode = ctk.CTkSegmentedButton(
             toolbar,
-            values=["Split View", "Watermarked", "Original", "Residual Heatmap"],
+            values=["Split View", "Watermarked", "Original", "Residual Heatmap", "Decoded Watermark"],
             font=OceanTheme.FONT_BODY,
             selected_color=OceanTheme.OCEAN_BLUE,
             selected_hover_color=OceanTheme.AQUA_SECONDARY,
@@ -174,7 +174,7 @@ class ImageViewer(ctk.CTkFrame):
         if has_attack:
             desired_modes = ["Split View", "Attacked", "Localized", "Recovered", "Watermarked", "Original", "Residual Heatmap"]
         else:
-            desired_modes = ["Split View", "Watermarked", "Original", "Residual Heatmap"]
+            desired_modes = ["Split View", "Watermarked", "Original", "Residual Heatmap", "Decoded Watermark"]
 
         current_modes = list(self.seg_mode.cget("values"))
         if current_modes != desired_modes:
@@ -205,6 +205,8 @@ class ImageViewer(ctk.CTkFrame):
         self.original_image = image
         self.watermarked_image = None
         self.difference_image = None
+        self.decoded_watermark_image = None
+        self.decoded_watermark_badge = "DECODED WATERMARK"
         self.attacked_image = None
         self.localized_image = None
         self.recovered_image = None
@@ -221,22 +223,26 @@ class ImageViewer(ctk.CTkFrame):
         attacked: Optional[Image.Image] = None,
         localized: Optional[Image.Image] = None,
         recovered: Optional[Image.Image] = None,
-        metrics: Optional[Dict[str, Any]] = None
+        metrics: Optional[Dict[str, Any]] = None,
+        decoded_watermark: Optional[Image.Image] = None,
+        decoded_badge: str = "DECODED WATERMARK"
     ):
-        """Updates the viewer with newly generated watermarked, difference, and tamper recovery images."""
+        """Updates the viewer with newly generated watermarked, difference, tamper recovery, and decoded images."""
         self.clear_error()
         self.watermarked_image = watermarked
         self.difference_image = difference
         self.attacked_image = attacked
         self.localized_image = localized
         self.recovered_image = recovered
+        self.decoded_watermark_image = decoded_watermark
+        self.decoded_watermark_badge = decoded_badge
         self.status_message = status_msg
 
         has_attack = (attacked is not None)
         self._update_view_modes(has_attack=has_attack)
 
         # Ensure split view is activated for comparison when an attack is applied
-        if has_attack and self.view_mode in ("Watermarked", "Original"):
+        if has_attack and self.view_mode in ("Watermarked", "Original", "Decoded Watermark"):
             self.view_mode = "Split View"
             self.seg_mode.set("Split View")
         elif not has_attack and self.view_mode in ("Attacked", "Localized", "Recovered"):
@@ -261,6 +267,7 @@ class ImageViewer(ctk.CTkFrame):
         self.error_method = method_name
         self.watermarked_image = None
         self.difference_image = None
+        self.decoded_watermark_image = None
         self.attacked_image = None
         self.localized_image = None
         self.recovered_image = None
@@ -329,6 +336,23 @@ class ImageViewer(ctk.CTkFrame):
             target = self.difference_image if self.difference_image else self._generate_blank_diff()
             title = "Watermark Residual Heatmap" if self.difference_image else "Residual Heatmap"
             self._render_single_image(target, title, container_w, container_h, badge="AMPLIFIED RESIDUALS")
+        elif self.view_mode == "Decoded Watermark":
+            if getattr(self, "decoded_watermark_image", None) is not None:
+                self._render_single_image(
+                    self.decoded_watermark_image,
+                    "Decoded Watermark",
+                    container_w,
+                    container_h,
+                    badge=getattr(self, "decoded_watermark_badge", "DECODED WATERMARK")
+                )
+            else:
+                self._render_single_image(
+                    self._generate_blank_diff(),
+                    "Decoded Watermark (Not available for this method)",
+                    container_w,
+                    container_h,
+                    badge="UNAVAILABLE"
+                )
 
     def _render_error_view(self, total_w: int, total_h: int):
         """Renders a compact, high-legibility error card centered in the viewer."""

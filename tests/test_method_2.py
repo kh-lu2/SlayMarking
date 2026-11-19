@@ -42,9 +42,13 @@ class TestMethod2(unittest.TestCase):
             unscrambled = Method2.arnold_transform(scrambled, iters=iters, inverse=True)
             self.assertTrue(np.allclose(rand_img, unscrambled))
 
+    @staticmethod
+    def _load_512_gray_host() -> Image.Image:
+        return Image.open("assets/examples/diver.jpg").convert("L").resize((512, 512))
+
     def test_embed_and_extract_paper_spec(self):
         """Tests embedding & extraction on a paper-compliant 512x512 grayscale image."""
-        host_img = Image.open("assets/examples/covid_xray_512.png")
+        host_img = self._load_512_gray_host()
         self.assertEqual(host_img.size, (512, 512))
         self.assertEqual(host_img.mode, "L")
 
@@ -98,7 +102,7 @@ class TestMethod2(unittest.TestCase):
 
     def test_robustness_against_attacks(self):
         """Tests robustness of watermark against common attacks from Table 4/5 of paper."""
-        host_img = Image.open("assets/examples/covid_xray_512.png")
+        host_img = self._load_512_gray_host()
         payload = "Name=?\nAge=?"
         params = {"gain_factor": 0.04, "arnold_iters": 5, "wavelet": "haar"}
 
