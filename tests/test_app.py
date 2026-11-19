@@ -82,8 +82,44 @@ class TestSlayMarking(unittest.TestCase):
             app.viewer._on_mode_change(mode)
             app.update()
 
+    def test_method_3_attack_ui_views(self):
+        app = SlayMarkingApp()
+        app.update()
+
+        # Select Method 3 (index 2)
+        app.method_panel._select_method(2, trigger_apply=False)
+        # Configure attack
+        app.method_panel.param_values["attack"] = "Copy-Move"
+        app.method_panel.param_values["tamper_size"] = 48
+        app.method_panel.trigger_apply()
+        app.update()
+
+        # Verify viewer has attack, localized, and recovered images
+        self.assertIsNotNone(app.viewer.attacked_image)
+        self.assertIsNotNone(app.viewer.localized_image)
+        self.assertIsNotNone(app.viewer.recovered_image)
+
+        # Verify segmented button values now include attack modes
+        modes = list(app.viewer.seg_mode.cget("values"))
+        self.assertIn("Attacked", modes)
+        self.assertIn("Localized", modes)
+        self.assertIn("Recovered", modes)
+
+        # Verify status banner shows detection message
+        status_text = app.viewer.lbl_status_text.cget("text")
+        self.assertIn("Method 3 Active Tamper Detection & Recovery", status_text)
+        self.assertIn("Copy-Move", status_text)
+
+        # Verify method panel status indicator
+        panel_status = app.method_panel.lbl_auto_status.cget("text")
+        self.assertIn("Attack detected & recovered", panel_status)
+
+        # Test switching across all attack modes
+        for mode in ["Split View", "Attacked", "Localized", "Recovered", "Watermarked", "Original", "Residual Heatmap"]:
+            app.viewer._on_mode_change(mode)
+            app.update()
+
         app.destroy()
-        print("All updated baseline features verified successfully.")
 
 if __name__ == "__main__":
     unittest.main()

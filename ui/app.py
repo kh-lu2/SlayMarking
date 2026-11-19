@@ -124,16 +124,26 @@ class SlayMarkingApp(ctk.CTk):
                 except Exception:
                     pass
 
-            # Update viewer with watermarked output and amplified difference residual map
+            # Update viewer with watermarked output, attack/recovery stages, decoded watermark, and difference residual map
             self.viewer.clear_error()
             self.viewer.set_watermark_result(
                 watermarked=result.watermarked_image,
                 difference=result.difference_map,
                 status_msg=result.message,
+                attacked=result.attacked_image,
+                localized=result.localized_image,
+                recovered=result.recovered_image,
+                metrics=result.metrics,
                 decoded_watermark=decoded_wm,
                 decoded_badge=decoded_badge
             )
-            self.method_panel.set_status(f"✓ {method.get_metadata().short_name} applied", is_error=False)
+
+            if result.status == "tamper_recovered":
+                rec_psnr = result.metrics.get("recovered_psnr_db", "N/A")
+                tamp_count = result.metrics.get("tampered_blocks", 0)
+                self.method_panel.set_status(f"⚠️ Attack detected & recovered! ({tamp_count} blks, {rec_psnr} dB)", is_error=False, is_warning=True)
+            else:
+                self.method_panel.set_status(f"✓ {method.get_metadata().short_name} applied", is_error=False)
 
         except Exception as e:
             self._handle_watermark_error(method, str(e))
