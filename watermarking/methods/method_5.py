@@ -42,11 +42,33 @@ class Method5(BaseWatermarkMethod):
     Reversible Visible Watermarking and Lossless Recovery of Original Images
     (Hu & Jeon, IEEE TCSVT 2006).
 
-    This method overlays a translucent visible watermark as an ownership tag
-    or privacy shield over a protected region R, while reversibly hiding
-    lossless reconstruction data packets in the non-watermarked area I - R.
-    Authorized users with the 80-bit user key can completely remove the visible
-    watermark and losslessly recover the original image data (MSE = 0, PSNR = inf).
+    A reversible visible watermarking and lossless image recovery algorithm primarily designed
+    for medical imagery, military/remote-sensing observation, and privacy-preserving content protection.
+    A visible watermark is translucently overlaid on a sensitive region R to serve as an ownership tag or
+    privacy shield, while data hiding embeds reconstruction data into the non-watermarked area I - R.
+    Authorized recipients with the user key can completely remove the watermark and losslessly restore
+    the original image with 0% distortion (100% bit-exact recovery).
+    Algorithm Steps:
+    Step 1: Region Selection & Preprocessing - Define sensitive region R (same dimensions as watermark W)
+    and extract pixel bit set D from bit plane R_D (MSB plane 7 or 6).
+    Step 2: Preprocessing Compression - Losslessly compress D into bitstream D_c using binary arithmetic coding.
+    Step 3: Key Bit-Plane Selection - Scan bit planes of non-watermarked area (I - R) from LSB to MSB
+    to identify lowest key bit plane I_k with sufficient spare space (Cap >= |D_c|).
+    Step 4: Error-Diffused Hybrid Pixel Selection - Select candidate pixels S on I_k using a hybrid
+    selection mechanism (fixed interval step S_p combined with a Random Pixel Selector, RPS) to disperse
+    artifacts and eliminate visual stripe noise. Group bits into 2x4 character blocks (scheme 2 '::::')
+    to exploit horizontal and vertical correlation.
+    Step 5: Capacity-Adaptive S Sequence Constitution - Iteratively construct sequence S until
+    |S| - |S_c| = |D_c| + n, recording skip points n >= 0.
+    Step 6: Payload Construction & Data Hiding - Concatenate compressed bitstreams H = S_c + D_c and
+    replace sequence S on I_k with H.
+    Step 7: 80-Bit User Key Construction - Assemble 80-bit key recording watermark dimensions (16 bits),
+    origin (32 bits), |D_c| (16 bits), I_k level (3 bits), hybrid flag (1 bit), step S_p (4 bits), and n (8 bits).
+    Step 8: Interleaved User-Key-Controlled Embedding - Embed binary logo W interleavingly across bit plane
+    R_D and neighbor R_D' under the control of UKCE pseudo-random generator seeded with user key.
+    Step 9: Watermark Removal & Lossless Recovery - Using user key, locate S, decode S_c to restore
+    original I_k, decode D_c to obtain D, and reverse UKCE bit placement to reconstruct original R and
+    losslessly recover original host image I (MSE = 0, PSNR = inf).
     """
 
     def __init__(self):
@@ -63,45 +85,15 @@ class Method5(BaseWatermarkMethod):
             authors="Yongjian Hu, Byeungwoo Jeon",
             year=2006,
             venue="IEEE Transactions on Circuits and Systems for Video Technology (TCSVT), Vol. 16, No. 11, pp. 1423-1429",
-            doi_or_url="https://doi.org/10.1109/TCSVT.2006.884011",
-            description=(
-                "A reversible visible watermarking and lossless image recovery algorithm primarily designed "
-                "for medical imagery, military/remote-sensing observation, and privacy-preserving content protection. "
-                "A visible watermark is translucently overlaid on a sensitive region R to serve as an ownership tag or "
-                "privacy shield, while data hiding embeds reconstruction data into the non-watermarked area I - R. "
-                "Authorized recipients with the user key can completely remove the watermark and losslessly restore "
-                "the original image with 0% distortion (100% bit-exact recovery).\n\n"
-                "Algorithm Steps:\n"
-                "Step 1: Region Selection & Preprocessing - Define sensitive region R (same dimensions as watermark W) "
-                "and extract pixel bit set D from bit plane R_D (MSB plane 7 or 6).\n"
-                "Step 2: Preprocessing Compression - Losslessly compress D into bitstream D_c using binary arithmetic coding.\n"
-                "Step 3: Key Bit-Plane Selection - Scan bit planes of non-watermarked area (I - R) from LSB to MSB "
-                "to identify lowest key bit plane I_k with sufficient spare space (Cap >= |D_c|).\n"
-                "Step 4: Error-Diffused Hybrid Pixel Selection - Select candidate pixels S on I_k using a hybrid "
-                "selection mechanism (fixed interval step S_p combined with a Random Pixel Selector, RPS) to disperse "
-                "artifacts and eliminate visual stripe noise. Group bits into 2x4 character blocks (scheme 2 '::::') "
-                "to exploit horizontal and vertical correlation.\n"
-                "Step 5: Capacity-Adaptive S Sequence Constitution - Iteratively construct sequence S until "
-                "|S| - |S_c| = |D_c| + n, recording skip points n >= 0.\n"
-                "Step 6: Payload Construction & Data Hiding - Concatenate compressed bitstreams H = S_c ∪ D_c and "
-                "replace sequence S on I_k with H.\n"
-                "Step 7: 80-Bit User Key Construction - Assemble 80-bit key recording watermark dimensions (16 bits), "
-                "origin (32 bits), |D_c| (16 bits), I_k level (3 bits), hybrid flag (1 bit), step S_p (4 bits), and n (8 bits).\n"
-                "Step 8: Interleaved User-Key-Controlled Embedding - Embed binary logo W interleavingly across bit plane "
-                "R_D and neighbor R_D' under the control of UKCE pseudo-random generator seeded with user key.\n"
-                "Step 9: Watermark Removal & Lossless Recovery - Using user key, locate S, decode S_c to restore "
-                "original I_k, decode D_c to obtain D, and reverse UKCE bit placement to reconstruct original R and "
-                "losslessly recover original host image I (MSE = 0, PSNR = ∞)."
-            ),
             abstract=(
-                "In this paper, we propose a reversible visible watermarking algorithm to satisfy a new application scenario "
+                "In this paper a reversible visible watermarking algorithm was proposed to satisfy a new application scenario "
                 "where the visible watermark serves as a tag or ownership identifier, but can be completely removed to resume "
                 "the original image data. It includes two procedures: data hiding and visible watermark embedding. In order to "
                 "losslessly recover both the watermark-covered and non-watermark-covered image contents at the receiver end, "
                 "the payload consists of two reconstruction data packets, one for recovering the watermark-covered region, "
                 "and the other for the nonwatermark-covered region. The data hiding technique reversibly hides the payload "
                 "in the image region not covered by the visible watermark. To satisfy the requirements of large capacity "
-                "and high image quality, our hiding technique is based on data compression and uses a payload-adaptive scheme. "
+                "and high image quality, hiding technique is based on data compression and uses a payload-adaptive scheme. "
                 "It further adopts error diffusion for improving subjective image quality and arithmetic compression using "
                 "a character-based model for increasing computational efficiency. The visible watermark is securely embedded "
                 "based on a user-key-controlled embedding mechanism. The data hiding and the visible watermark embedding "
@@ -117,7 +109,7 @@ class Method5(BaseWatermarkMethod):
                 param_type="choice",
                 default="7 (MSB - Heavy Tag)",
                 choices=["7 (MSB - Heavy Tag)", "6 (2nd MSB - Light Tag)"],
-                description="Bit plane of region R to be altered by W (Table I). MSB (7) gives prominent contrast; 2nd MSB (6) gives higher transparency."
+                description="Bit plane of region R to be altered by W. MSB (7) gives prominent contrast; 2nd MSB (6) gives higher transparency."
             ),
             MethodParameter(
                 name="watermark_size",
@@ -125,7 +117,7 @@ class Method5(BaseWatermarkMethod):
                 param_type="choice",
                 default="64x128",
                 choices=["64x128", "128x128", "128x256", "32x64", "64x64"],
-                description="Dimensions (H x W) of the binary watermark logo and protected region R (Table I)."
+                description="Dimensions (H x W) of the binary watermark logo and protected region R."
             ),
             MethodParameter(
                 name="region_origin_y",
@@ -153,7 +145,7 @@ class Method5(BaseWatermarkMethod):
                 param_type="choice",
                 default="Hybrid (RPS + Step)",
                 choices=["Hybrid (RPS + Step)", "Fixed-Interval", "Consecutive"],
-                description="Pixel selection strategy on key bit plane I_k for error diffusion (Section II-B.1)."
+                description="Pixel selection strategy on key bit plane I_k for error diffusion."
             ),
             MethodParameter(
                 name="user_key",
@@ -197,8 +189,8 @@ class Method5(BaseWatermarkMethod):
         mask: np.ndarray
     ) -> List[List[Tuple[int, int]]]:
         """
-        Partitions the region indicated by mask (e.g. I - R) into 2x4 pixel blocks
-        (Scheme 2 '::::' from Section II-B.3). Each 2x4 block forms an 8-bit byte.
+        Partitions the region indicated by mask into 2x4 pixel blocks
+        Each 2x4 block forms an 8-bit byte.
         """
         blocks = []
         # Step through in 2x4 block raster scan order
@@ -241,7 +233,7 @@ class Method5(BaseWatermarkMethod):
                 image_arr[pr, pc] = (image_arr[pr, pc] & mask) | (bit << plane_idx)
 
     # =========================================================================
-    # Embedding Procedure (Section II)
+    # Embedding Procedure
     # =========================================================================
 
     def embed(
@@ -285,9 +277,7 @@ class Method5(BaseWatermarkMethod):
         # Generate binary watermark logo W
         w_logo = create_binary_watermark(watermark_data, height=hr, width=wr)
 
-        # ---------------------------------------------------------------------
         # Step 1: Preprocessing of R (extract D from R_D)
-        # ---------------------------------------------------------------------
         R = img_arr[r0:r0 + hr, c0:c0 + wr]
         D_plane = extract_bit_plane(R, n_rd)
         # Flatten in raster-scan order and pack into bytes
@@ -295,15 +285,11 @@ class Method5(BaseWatermarkMethod):
         d_bytes = np.packbits(d_bits).tobytes()
         len_d_bytes = len(d_bytes)
 
-        # ---------------------------------------------------------------------
         # Step 2: Lossless compression of D -> D_c
-        # ---------------------------------------------------------------------
         d_c = self._lossless_compress(d_bytes)
         d_c_len = len(d_c)
 
-        # ---------------------------------------------------------------------
         # Step 3: Key Bit Plane Selection in I - R (Ik)
-        # ---------------------------------------------------------------------
         mask_not_R = np.ones((img_h, img_w), dtype=bool)
         mask_not_R[r0:r0 + hr, c0:c0 + wr] = False
 
@@ -339,9 +325,7 @@ class Method5(BaseWatermarkMethod):
             best_ik = max(spare_capacities, key=spare_capacities.get)
             best_cap = spare_capacities[best_ik]
 
-        # ---------------------------------------------------------------------
         # Step 4: Error-Diffused Hybrid Pixel Selection (RPS + Step Sp)
-        # ---------------------------------------------------------------------
         # Largest step S_Lp (Eq. 2)
         s_lp = max(1, best_cap // max(1, d_c_len))
         max_sp = min(s_lp, 15)
@@ -410,7 +394,7 @@ class Method5(BaseWatermarkMethod):
             res = search_in_mode(use_hybrid=True)
             chosen_hybrid = 1
             if res is None:
-                # Fallback to Fixed-interval as specified in paper Section II-B.1
+                # Fallback to Fixed-interval
                 res = search_in_mode(use_hybrid=False)
                 chosen_hybrid = 0
 
@@ -425,15 +409,11 @@ class Method5(BaseWatermarkMethod):
             chosen_s_c = self._lossless_compress(ik_all_chars)
             chosen_k = len(ik_all_chars)
 
-        # ---------------------------------------------------------------------
-        # Step 5: Capacity Constraint & Skip Points n (Section II-C)
-        # ---------------------------------------------------------------------
+        # Step 5: Capacity Constraint & Skip Points n
         # |S| - |S_c| = |D_c| + n  =>  n = (|S| - |S_c|) - |D_c|
         n_skip = max(0, min(255, (chosen_k - len(chosen_s_c)) - d_c_len))
 
-        # ---------------------------------------------------------------------
-        # Step 6: Construct Payload H = S_c ∪ D_c and Embed into I_k
-        # ---------------------------------------------------------------------
+        # Step 6: Construct Payload H = S_c + D_c and Embed into I_k
         # H length is exactly chosen_k (padded with n_skip zeros if needed)
         h_payload = chosen_s_c + d_c + bytes(n_skip)
         # Truncate or pad to exactly chosen_k bytes
@@ -450,9 +430,7 @@ class Method5(BaseWatermarkMethod):
             h_payload
         )
 
-        # ---------------------------------------------------------------------
-        # Step 7: Construct 80-Bit User Key (Section II-D.1)
-        # ---------------------------------------------------------------------
+        # Step 7: Construct 80-Bit User Key
         user_key_hex = pack_user_key_80bit(
             h_w=hr,
             w_w=wr,
@@ -465,9 +443,7 @@ class Method5(BaseWatermarkMethod):
             n=n_skip
         )
 
-        # ---------------------------------------------------------------------
         # Step 8: User-Key-Controlled Visible Watermark Embedding (UKCE)
-        # ---------------------------------------------------------------------
         user_key_bytes = bytes.fromhex(user_key_hex)
         ukce_seed = int.from_bytes(user_key_bytes, "big") % (2**31 - 1)
         ukce_rng = np.random.RandomState(ukce_seed)
@@ -503,7 +479,7 @@ class Method5(BaseWatermarkMethod):
 
         # Metrics computation
         metrics = compute_metrics(orig_pil, watermarked_pil)
-        # Calculate PSNR without R (as in paper Table I)
+        # Calculate PSNR without R 
         psnr_without_r = compute_psnr_without_region(
             img_arr,
             watermarked_arr,
@@ -514,7 +490,7 @@ class Method5(BaseWatermarkMethod):
         )
         metrics["psnr_without_r_db"] = round(psnr_without_r, 2)
 
-        # Error diffusion ratios (Section II-B.2)
+        # Error diffusion ratios
         n_p = (chosen_k * (chosen_sp or 1) * (2 if chosen_hybrid else 1)) * 8
         n_t = total_blocks * 8
         e_d = min(100.0, round((n_p / max(1, n_t)) * 100.0, 1))
@@ -561,7 +537,7 @@ class Method5(BaseWatermarkMethod):
         )
 
     # =========================================================================
-    # Watermark Removal & Image Data Reconstruction (Section III)
+    # Watermark Removal & Image Data Reconstruction
     # =========================================================================
 
     def extract(
@@ -572,7 +548,7 @@ class Method5(BaseWatermarkMethod):
     ) -> Dict[str, Any]:
         """
         Removes the visible watermark and reconstructs the 100% losslessly
-        recovered original image using the 80-bit user key (Section III).
+        recovered original image using the 80-bit user key
         """
         start_time = time.time()
         p = params or {}
@@ -656,7 +632,7 @@ class Method5(BaseWatermarkMethod):
         ik_bits = extract_bit_plane(rec_arr, n_ik)
         rec_payload = self._read_character_stream(ik_bits, rec_candidate_blocks)
 
-        # Decompress S_c and determine |S| = |S_c| + |D_c| + n (Section III)
+        # Decompress S_c and determine |S| = |S_c| + |D_c| + n
         rec_s = None
         rec_s_c_len = None
 
@@ -692,9 +668,7 @@ class Method5(BaseWatermarkMethod):
         rec_d_bits = np.unpackbits(np.frombuffer(rec_d_bytes, dtype=np.uint8))[:hr * wr]
         rec_d_plane = rec_d_bits.reshape((hr, wr))
 
-        # ---------------------------------------------------------------------
         # 1. Restore I - R by writing back original S characters
-        # ---------------------------------------------------------------------
         self._write_character_stream(
             rec_arr,
             n_ik,
@@ -702,9 +676,7 @@ class Method5(BaseWatermarkMethod):
             rec_s
         )
 
-        # ---------------------------------------------------------------------
         # 2. Restore region R by reversing UKCE bit placement and writing back D
-        # ---------------------------------------------------------------------
         # Determine bit planes N_RD and N_RD'
         n_rd = 7
         if self._last_embed_cache is not None:

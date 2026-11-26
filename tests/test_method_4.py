@@ -25,7 +25,6 @@ class TestMethod4(unittest.TestCase):
         self.assertIn("Honey Encryption", meta.short_name)
         self.assertEqual(meta.year, 2025)
         self.assertIn("Xiong", meta.authors)
-        self.assertIn("10.1038/s41598-025-05492-1", meta.doi_or_url)
         self.assertGreater(len(meta.abstract), 50)
 
     def test_parameters(self):

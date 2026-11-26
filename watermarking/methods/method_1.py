@@ -58,12 +58,6 @@ class Method1(BaseWatermarkMethod):
             authors="Morteza Makhloghi, Fardin Akhlaghian, Habibollah Danyali",
             year=2011,
             venue="IEEE Conference on Digital Image Processing & Security",
-            doi_or_url="https://doi.org/10.1109/IEEE.2011.Makhloghi",
-            description=(
-                "A blind robust digital image watermarking scheme based on singular value decomposition (SVD) "
-                "in discrete wavelet transform (DWT) domain. Singular values of the watermark are converted to "
-                "semi-binary arrays and embedded into 2x2 blocks of wavelet sub-bands sorted by significant coefficients."
-            ),
             abstract=(
                 "This paper presents a blind robust digital image watermarking scheme based on singular value decomposition "
                 "in wavelet domain for copyright protection. The proposed algorithm inserts bits of singular values of the "
@@ -73,8 +67,7 @@ class Method1(BaseWatermarkMethod):
                 "algorithm which converts the entries of each wavelet block and the singular values of grey-scale watermark "
                 "image to new defined semi-binary arrays. Then, the bits of singular values of the watermark are inserted into "
                 "the arrays of the blocks entries. Finally, the new entries of each block are constructed to make the watermarked "
-                "image. The experimental results show that the proposed method is more robust against different attacks and the "
-                "watermarked image has good transparency."
+                "image."
             )
         )
 
@@ -124,7 +117,7 @@ class Method1(BaseWatermarkMethod):
         return waverec2_haar(current_ll, coeffs)
 
     # =========================================================================
-    # Embedding Procedure (Section V.A)
+    # Embedding Procedure 
     # =========================================================================
 
     def embed(
@@ -333,7 +326,7 @@ class Method1(BaseWatermarkMethod):
         )
 
     # =========================================================================
-    # Watermark Extraction (Section V.B)
+    # Watermark Extraction 
     # =========================================================================
 
     def extract(

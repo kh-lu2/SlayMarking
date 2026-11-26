@@ -36,21 +36,6 @@ class TestMethod5(unittest.TestCase):
         self.assertEqual(meta.paper_title, "Reversible Visible Watermarking and Lossless Recovery of Original Images")
         self.assertIn("TCSVT", meta.venue)
 
-        # Verify description: brief explanation first, then structured steps
-        desc = meta.description
-        self.assertTrue(len(desc) > 200)
-        self.assertIn("primarily designed", desc.lower())
-        self.assertIn("lossless", desc.lower())
-        self.assertIn("Step 1:", desc)
-        self.assertIn("Step 2:", desc)
-        self.assertIn("Step 3:", desc)
-        self.assertIn("Step 4:", desc)
-        self.assertIn("Step 5:", desc)
-        self.assertIn("Step 6:", desc)
-        self.assertIn("Step 7:", desc)
-        self.assertIn("Step 8:", desc)
-        self.assertIn("Step 9:", desc)
-
         # Verify abstract
         self.assertTrue(len(meta.abstract) > 200)
         self.assertIn("losslessly recover", meta.abstract)

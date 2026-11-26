@@ -24,7 +24,6 @@ class TestMethod2(unittest.TestCase):
         self.assertIn("DWT-HMD-SVD", meta.short_name)
         self.assertEqual(meta.year, 2025)
         self.assertIn("Chaudhary", meta.authors)
-        self.assertIn("10.1038/s41598-025-94080-4", meta.doi_or_url)
         self.assertTrue(len(meta.abstract) > 50)
 
     def test_parameters(self):

@@ -77,24 +77,19 @@ class Method3(BaseWatermarkMethod):
             authors="Prasanth Vaidya S, N V P S Rajesh Kandala, Chandra Mouli PVSSR",
             year=2023,
             venue="Journal of Visual Communication and Image Representation",
-            doi_or_url="https://doi.org/10.1016/j.jvcir.2023.103867",
             description=(
                 "A fragile watermarking scheme combining 2-level DWT in the LL2 sub-band and "
                 "Schur decomposition (SD) for 4x4 block tamper detection (ABB) and 32-bit self-recovery."
             ),
             abstract=(
                 "This paper presents a robust image tampering detection and recovery using a fragile watermarking "
-                "technique. The proposed method embeds a watermark into the image using a secret key. Various image "
-                "and signal processing attacks, including copy-paste, constant-average, noise, and rotation, are "
+                "technique. The proposed method embeds a watermark into the image using a secret key. Image "
+                "processing attacks, including copy-paste, constant-average, noise, and rotation, are "
                 "considered during communication. For watermark extraction, a blind extraction algorithm is employed, "
                 "utilizing the secret key without requiring the original image. Active tamper detection is then "
                 "applied to the tampered image by checking the integrity of the retrieved watermark. In case of "
                 "distortion, a recovery algorithm is applied to the attacked watermark-embedded image, resulting in the "
-                "production of the recovered image. Evaluation of the proposed watermarking scheme is performed using "
-                "metrics such as Structural Similarity, Peak Signal-to-Noise Ratio, and Normalized Cross Correlation. "
-                "Comparative analysis with existing digital watermarking schemes in the literature demonstrates the "
-                "superior performance of the proposed method, indicating its effectiveness in image tampering detection "
-                "and recovery."
+                "production of the recovered image."
             )
         )
 
@@ -108,7 +103,7 @@ class Method3(BaseWatermarkMethod):
                 min_value=0.5,
                 max_value=1.2,
                 step=0.01,
-                description="Wavelet scaling key factor (Eq. 3). Tunes preservation of the LL2 approximation sub-band."
+                description="Wavelet scaling key factor. Tunes preservation of the LL2 approximation sub-band."
             ),
             MethodParameter(
                 name="beta",
@@ -118,7 +113,7 @@ class Method3(BaseWatermarkMethod):
                 min_value=0.005,
                 max_value=0.2,
                 step=0.005,
-                description="Watermark embedding intensity key factor into LL2 subband (Eq. 3). Balances watermark visibility and tamper sensitivity."
+                description="Watermark embedding intensity key factor into LL2 subband. Balances watermark visibility and tamper sensitivity."
             ),
             MethodParameter(
                 name="secret_key",
@@ -160,7 +155,7 @@ class Method3(BaseWatermarkMethod):
         Computes 16 Authentication Block Bits (ABB) from a 4x4 block using Schur decomposition.
         
         Step 6: Block has LSB set to 0.
-        Step 7: Schur decomposition: A = U * lambda * U^T  (Eq. 5).
+        Step 7: Schur decomposition: A = U * lambda * U^T 
         Step 8: Schur form traces are calculated and mapped to [0 - 262143].
         Incorporates block spatial position hash to guarantee robust detection of Copy-Move attacks.
         """
@@ -193,7 +188,7 @@ class Method3(BaseWatermarkMethod):
         return [(combined >> (15 - i)) & 1 for i in range(16)]
 
     # =========================================================================
-    # Step 5 & Recovery Bits Generation (Section 5 & 7, Fig. 3)
+    # Step 5 & Recovery Bits Generation
     # =========================================================================
 
     @staticmethod
@@ -231,7 +226,7 @@ class Method3(BaseWatermarkMethod):
         return means
 
     # =========================================================================
-    # Watermark Embedding Procedure (Section 4.1)
+    # Watermark Embedding Procedure
     # =========================================================================
 
     def embed(
@@ -409,7 +404,7 @@ class Method3(BaseWatermarkMethod):
         # Calculate standard watermark quality metrics (PSNR, SSIM, NCC)
         metrics = compute_metrics(eval_orig, eval_wm)
 
-        # Extract watermark to calculate NCC (Eq. 7 & 11)
+        # Extract watermark to calculate NCC
         ext_result = self.extract(
             watermarked_image=final_watermarked_img,
             original_image=base_img,
@@ -434,12 +429,12 @@ class Method3(BaseWatermarkMethod):
                 tamper_size=tamper_size
             )
 
-            # Detect tampering (Section 4.3)
+            # Detect tampering
             tamper_res = self.detect_tamper(attacked_img, secret_key=secret_key)
             tamper_mask = tamper_res["tamper_mask"]
             tampered_count = int(tamper_res["tampered_blocks_count"])
 
-            # Localize and recover (Section 5)
+            # Localize and recover 
             rec_res = self.recover(
                 tampered_image=attacked_img,
                 tamper_mask=tamper_mask,
@@ -498,7 +493,7 @@ class Method3(BaseWatermarkMethod):
         )
 
     # =========================================================================
-    # Watermark Extraction Procedure (Section 4.2)
+    # Watermark Extraction Procedure
     # =========================================================================
 
     def extract(
@@ -508,12 +503,12 @@ class Method3(BaseWatermarkMethod):
         params: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Watermark extraction algorithm following Section 4.2:
+        Watermark extraction algorithm:
         Step 1: 2-level Haar DWT on authenticated image:
                 [LL1', LH1', HL1', HH1'] = DWT2(I_A^W)
-                [LL2', LH2', HL2', HH2'] = DWT2(LL1')  (Eq. 6)
+                [LL2', LH2', HL2', HH2'] = DWT2(LL1') 
         Step 2: Watermark extracted via:
-                W'_S = (LL2'_W - (alpha * LL2)) / beta  (Eq. 7)
+                W'_S = (LL2'_W - (alpha * LL2)) / beta
         """
         params = params or {}
         cache = self._last_embed_cache or {}
@@ -613,7 +608,7 @@ class Method3(BaseWatermarkMethod):
         }
 
     # =========================================================================
-    # Tamper Detection Algorithm (Section 4.3, Fig. 5)
+    # Tamper Detection Algorithm
     # =========================================================================
 
     def detect_tamper(
@@ -695,7 +690,7 @@ class Method3(BaseWatermarkMethod):
         }
 
     # =========================================================================
-    # Tamper Recovery Algorithm (Section 5, Fig. 6)
+    # Tamper Recovery Algorithm 
     # =========================================================================
 
     def recover(
@@ -809,7 +804,7 @@ class Method3(BaseWatermarkMethod):
         }
 
     # =========================================================================
-    # Attack Simulation Helpers (Section 6 & Table 3)
+    # Attack Simulation Helpers 
     # =========================================================================
 
     @staticmethod
